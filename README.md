@@ -1,1 +1,1 @@
-# k8s-rightsizer-operator
+# k8s-rightsizer
