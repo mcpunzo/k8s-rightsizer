@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mcpunzo/k8s-rightsizer/recommendation/model"
+	"github.com/mcpunzo/k8s-rightsizer/model"
 	ir "github.com/mcpunzo/k8s-rightsizer/recommendation/reader/internal/reader"
 )
 
