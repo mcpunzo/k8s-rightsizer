@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // ResizerEngine is the main engine that orchestrates the resizing of Kubernetes workloads based on recommendations.
 type ResizerEngine struct {
-	selector *WorkloadSelector
-	resizer  *WorkloadResizer
+	selector WorkloadSelector
+	resizer  WorkloadResizer
 }
 
 // NewResizerEngine creates a new ResizerEngine instance.
@@ -20,7 +22,7 @@ type ResizerEngine struct {
 // param selector: The WorkloadSelector used for selecting workloads.
 // param resizer: The WorkloadResizer used for resizing workloads.
 // returns: A new instance of ResizerEngine.
-func NewResizerEngine(selector *WorkloadSelector, resizer *WorkloadResizer) *ResizerEngine {
+func NewResizerEngine(selector WorkloadSelector, resizer WorkloadResizer) *ResizerEngine {
 	return &ResizerEngine{
 		selector: selector,
 		resizer:  resizer,
@@ -40,9 +42,9 @@ func (e *ResizerEngine) Resize(ctx context.Context, recommendations []model.Reco
 		var err error
 		switch rec.Type {
 		case model.ReplicaSet:
-			err = e.resizeDeployment(ctx, rec)
+			err = e.resizeDeployment(ctx, &rec)
 		case model.StatefuSet:
-			err = e.resizeStatefulSet(ctx, rec)
+			err = e.resizeStatefulSet(ctx, &rec)
 		default:
 			err = fmt.Errorf("unsupported resource type for %s", rec.Type)
 		}
@@ -59,7 +61,11 @@ func (e *ResizerEngine) Resize(ctx context.Context, recommendations []model.Reco
 }
 
 // resizeDeployment finds the target Deployment based on the recommendation and applies the new resource requests.
-func (e *ResizerEngine) resizeDeployment(ctx context.Context, rec model.Recommendation) error {
+// It also waits for the rollout to complete and checks for any critical errors during the process. If any error occurs, it attempts to rollback to the previous state.
+// param ctx: The context for managing request deadlines and cancellation.
+// param rec: The Recommendation object that contains the details for resizing the Deployment.
+// returns: An error if the resizing operation fails, otherwise nil.
+func (e *ResizerEngine) resizeDeployment(ctx context.Context, rec *model.Recommendation) error {
 	deployment, err := e.selector.FindDeployment(ctx, rec)
 	if err != nil {
 		return err
@@ -68,21 +74,65 @@ func (e *ResizerEngine) resizeDeployment(ctx context.Context, rec model.Recommen
 		return fmt.Errorf("deployment not found for %s", rec)
 	}
 
-	// Placeholder for actual resizing logic for Deployment
+	// create a deep copy in case of rollback needs
+	deploymentCopy := deployment.DeepCopy()
+
 	log.Printf("Resizing Deployment: %s\n", deployment.Name)
 	err = e.resizer.ResizeDeployment(ctx, deployment, rec)
 
 	if err != nil {
 		return fmt.Errorf("failed to update deployment for %s: %v", rec, err)
-		// TODO: implement logic to wait for the deployment to be updated and check if the new resource requests are applied
-		// If the deployment is not up after the update, we should consider rolling back to the previous state to avoid downtime
 	}
 
+	err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 5*time.Minute, false, func(childCtx context.Context) (bool, error) {
+		d, err := e.selector.FindDeployment(childCtx, &model.Recommendation{Namespace: deployment.Namespace, WorkloadName: deployment.Name})
+		if err != nil {
+			return false, err
+		}
+
+		// Check for critical errors (OOM, CrashLoop, Unschedulable)
+		isError, reason := e.resizer.CheckPodCriticalErrors(childCtx, d.Namespace, d.Spec.Selector)
+		if isError {
+			// Return the error to stop polling immediately
+			return false, fmt.Errorf("fail detected: %s", reason)
+		}
+
+		// Check if the rollout is complete
+		if d.Status.UpdatedReplicas == *(d.Spec.Replicas) &&
+			d.Status.AvailableReplicas == *(d.Spec.Replicas) &&
+			d.Status.ObservedGeneration >= d.Generation {
+			return true, nil
+		}
+
+		log.Printf("[%s] Rollout in progress... (%d/%d ready)", d.Name, d.Status.AvailableReplicas, *(d.Spec.Replicas))
+		return false, nil
+	})
+
+	// Rollback in case of error or timeout
+	if err != nil {
+		log.Printf("[!!!] ERROR: %v. Start Rollback for %s", err, deploymentCopy.Name)
+
+		// Reset ResourceVersion to avoid conflicts during rollback
+		deploymentCopy.ResourceVersion = ""
+
+		err = e.resizer.ResizeDeployment(ctx, deploymentCopy, &model.Recommendation{})
+		if err != nil {
+			return fmt.Errorf("Update failed (%v) and rollback failed (%v)", err, err)
+		}
+
+		return fmt.Errorf("update canceled: %v", err)
+	}
+
+	log.Printf("[SUCCESS] %s updated and stable", rec.WorkloadName)
 	return nil
 }
 
 // resizeStatefulSet finds the target StatefulSet based on the recommendation and applies the new resource requests.
-func (e *ResizerEngine) resizeStatefulSet(ctx context.Context, rec model.Recommendation) error {
+// It also waits for the rollout to complete and checks for any critical errors during the process. If any error occurs, it attempts to rollback to the previous state.
+// param ctx: The context for managing request deadlines and cancellation.
+// param rec: The Recommendation object that contains the details for resizing the StatefulSet.
+// returns: An error if the resizing operation fails, otherwise nil.
+func (e *ResizerEngine) resizeStatefulSet(ctx context.Context, rec *model.Recommendation) error {
 	statefulSet, err := e.selector.FindStatefulSet(ctx, rec)
 	if err != nil {
 		return err
@@ -91,15 +141,54 @@ func (e *ResizerEngine) resizeStatefulSet(ctx context.Context, rec model.Recomme
 		return fmt.Errorf("statefulset not found for %s", rec)
 	}
 
+	statefulSetCopy := statefulSet.DeepCopy()
+
 	log.Printf("Resizing StatefulSet: %s\n", statefulSet.Name)
 	err = e.resizer.ResizeStatefulSet(ctx, statefulSet, rec)
 
 	if err != nil {
 		return fmt.Errorf("failed to update statefulset for %s: %v", rec, err)
-		// TODO: implement logic to wait for the statefulset to be updated and check if the new resource requests are applied
-		// If the statefulset is not up after the update, we should consider rolling back to the previous state to avoid downtime
-
 	}
 
+	err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 5*time.Minute, false, func(childCtx context.Context) (bool, error) {
+		s, err := e.selector.FindStatefulSet(childCtx, &model.Recommendation{Namespace: statefulSet.Namespace, WorkloadName: statefulSet.Name})
+		if err != nil {
+			return false, err
+		}
+
+		// Check for critical errors (OOM, CrashLoop, Unschedulable)
+		isError, reason := e.resizer.CheckPodCriticalErrors(childCtx, s.Namespace, s.Spec.Selector)
+		if isError {
+			// Return the error to stop polling immediately
+			return false, fmt.Errorf("fail detected: %s", reason)
+		}
+
+		// Check if the rollout is complete
+		if s.Status.UpdatedReplicas == *(s.Spec.Replicas) &&
+			s.Status.AvailableReplicas == *(s.Spec.Replicas) &&
+			s.Status.ObservedGeneration >= s.Generation {
+			return true, nil
+		}
+
+		log.Printf("[%s] Rollout in progress... (%d/%d ready)", s.Name, s.Status.AvailableReplicas, *(s.Spec.Replicas))
+		return false, nil
+	})
+
+	// Rollback in case of error or timeout
+	if err != nil {
+		log.Printf("[!!!] ERROR: %v. Start Rollback for %s", err, statefulSetCopy.Name)
+
+		// Reset ResourceVersion to avoid conflicts during rollback
+		statefulSetCopy.ResourceVersion = ""
+
+		err = e.resizer.ResizeStatefulSet(ctx, statefulSetCopy, &model.Recommendation{})
+		if err != nil {
+			return fmt.Errorf("Update failed (%v) and rollback failed (%v)", err, err)
+		}
+
+		return fmt.Errorf("update canceled: %v", err)
+	}
+
+	log.Printf("[SUCCESS] %s updated and stable", rec.WorkloadName)
 	return nil
 }

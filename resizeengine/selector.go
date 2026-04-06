@@ -10,14 +10,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// WorkloadSelector is responsible for finding Kubernetes workloads (Deployments and StatefulSets) based on recommendations.
-type WorkloadSelector struct {
+// WorkloadSelector defines the methods required for finding Kubernetes workloads (Deployments and StatefulSets) based on recommendations.
+type WorkloadSelector interface {
+	FindStatefulSet(ctx context.Context, rec *model.Recommendation) (*v1.StatefulSet, error)
+	FindDeployment(ctx context.Context, rec *model.Recommendation) (*v1.Deployment, error)
+}
+
+// K8sWorkloadSelector is responsible for finding Kubernetes workloads (Deployments and StatefulSets) based on recommendations.
+type K8sWorkloadSelector struct {
 	client K8sClient
 }
 
-// NewWorkloadSelector creates a new WorkloadSelector.
-func NewWorkloadSelector(client K8sClient) *WorkloadSelector {
-	return &WorkloadSelector{
+// NewK8sWorkloadSelector creates a new K8sWorkloadSelector.
+// It accepts the K8sClient interface which is satisfied by the standard kubernetes.Clientset.
+// param client: The Kubernetes client used for interacting with the cluster.
+// returns: A new instance of K8sWorkloadSelector.
+func NewK8sWorkloadSelector(client K8sClient) *K8sWorkloadSelector {
+	return &K8sWorkloadSelector{
 		client: client,
 	}
 }
@@ -29,7 +38,7 @@ func NewWorkloadSelector(client K8sClient) *WorkloadSelector {
 // param ctx: The context for managing request deadlines and cancellation.
 // param rec: The Recommendation containing the target namespace, StatefulSet name (optional), and container name.
 // returns: A pointer to the found StatefulSet or an error if not found.
-func (s *WorkloadSelector) FindStatefulSet(ctx context.Context, rec model.Recommendation) (*v1.StatefulSet, error) {
+func (s *K8sWorkloadSelector) FindStatefulSet(ctx context.Context, rec *model.Recommendation) (*v1.StatefulSet, error) {
 	if rec.WorkloadName != "" {
 		statefulSet, err := s.client.AppsV1().StatefulSets(rec.Namespace).Get(ctx, rec.WorkloadName, metav1.GetOptions{})
 		if err != nil {
@@ -69,7 +78,7 @@ func (s *WorkloadSelector) FindStatefulSet(ctx context.Context, rec model.Recomm
 // param ctx: The context for managing request deadlines and cancellation.
 // param rec: The Recommendation containing the target namespace, Deployment name (optional), and container name.
 // returns: A pointer to the found Deployment or an error if not found.
-func (s *WorkloadSelector) FindDeployment(ctx context.Context, rec model.Recommendation) (*v1.Deployment, error) {
+func (s *K8sWorkloadSelector) FindDeployment(ctx context.Context, rec *model.Recommendation) (*v1.Deployment, error) {
 	if rec.WorkloadName != "" {
 		deployment, err := s.client.AppsV1().Deployments(rec.Namespace).Get(ctx, rec.WorkloadName, metav1.GetOptions{})
 		if err != nil {

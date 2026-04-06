@@ -138,10 +138,10 @@ func TestFindDeployment_TableDriven(t *testing.T) {
 			mApps := &mockSelectorAppsV1{deployClient: mDeploy}
 			mClient := &mockK8sClient{appsV1: mApps}
 
-			selector := NewWorkloadSelector(mClient)
+			selector := NewK8sWorkloadSelector(mClient)
 
 			// Execute
-			got, err := selector.FindDeployment(tt.ctx, tt.recommendation)
+			got, err := selector.FindDeployment(tt.ctx, &tt.recommendation)
 
 			// Assert Error
 			if (err != nil) != tt.wantErr {

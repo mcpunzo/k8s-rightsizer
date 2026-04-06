@@ -27,7 +27,7 @@ func main() {
 
 	inputFile := filepath.Join(filepath.Dir(currentFile), "..", "data", "test.xlsx")
 	recFile := flag.String("file-path", inputFile, "Recommendation file path (xlsx, xsl")
-	deepResize := flag.Bool("deep-resize", false, "Enable finding deployment from namespace and container name if not present")
+	deepResize := flag.Bool("deep-resize", false, "Enable finding deployment from namespace and container name if workload name is not present")
 
 	flag.Parse()
 
@@ -75,7 +75,7 @@ func getClientset() (*kubernetes.Clientset, error) {
 // param client: The Kubernetes client used for interacting with the cluster.
 // returns: A new instance of ResizerEngine.
 func resizeEngineBuolder(client re.K8sClient) *re.ResizerEngine {
-	selector := re.NewWorkloadSelector(client)
-	resizer := re.NewWorkloadResizer(client)
+	selector := re.NewK8sWorkloadSelector(client)
+	resizer := re.NewK8sWorkloadResizer(client)
 	return re.NewResizerEngine(selector, resizer)
 }
