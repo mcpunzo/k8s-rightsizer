@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -115,7 +116,13 @@ func (e *ResizerEngine) resizeDeployment(ctx context.Context, rec *model.Recomme
 		// Reset ResourceVersion to avoid conflicts during rollback
 		deploymentCopy.ResourceVersion = ""
 
-		err = e.resizer.ResizeDeployment(ctx, deploymentCopy, &model.Recommendation{})
+		rollbackRec := e.createRollbackRecommendation(rec, deploymentCopy.Spec.Template)
+		if rollbackRec == nil {
+			return fmt.Errorf("failed to create rollback recommendation for %s", rec)
+		}
+
+		err = e.resizer.ResizeDeployment(ctx, deploymentCopy, rollbackRec)
+
 		if err != nil {
 			return fmt.Errorf("Update failed (%v) and rollback failed (%v)", err, err)
 		}
@@ -181,7 +188,12 @@ func (e *ResizerEngine) resizeStatefulSet(ctx context.Context, rec *model.Recomm
 		// Reset ResourceVersion to avoid conflicts during rollback
 		statefulSetCopy.ResourceVersion = ""
 
-		err = e.resizer.ResizeStatefulSet(ctx, statefulSetCopy, &model.Recommendation{})
+		rollbackRec := e.createRollbackRecommendation(rec, statefulSetCopy.Spec.Template)
+		if rollbackRec == nil {
+			return fmt.Errorf("failed to create rollback recommendation for %s", rec)
+		}
+
+		err = e.resizer.ResizeStatefulSet(ctx, statefulSetCopy, rollbackRec)
 		if err != nil {
 			return fmt.Errorf("Update failed (%v) and rollback failed (%v)", err, err)
 		}
@@ -190,5 +202,19 @@ func (e *ResizerEngine) resizeStatefulSet(ctx context.Context, rec *model.Recomm
 	}
 
 	log.Printf("[SUCCESS] %s updated and stable", rec.WorkloadName)
+	return nil
+}
+
+func (e *ResizerEngine) createRollbackRecommendation(rec *model.Recommendation, template v1.PodTemplateSpec) *model.Recommendation {
+	newRec := rec.DeepCopy()
+
+	for _, c := range template.Spec.Containers {
+		if c.Name == rec.Container {
+			newRec.CpuRequestRecommendation = c.Resources.Requests.Cpu().String()
+			newRec.MemoryRequestRecommendation = c.Resources.Requests.Memory().String()
+			return newRec
+		}
+	}
+
 	return nil
 }

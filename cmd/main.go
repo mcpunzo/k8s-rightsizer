@@ -10,71 +10,138 @@ import (
 
 	"github.com/mcpunzo/k8s-rightsizer/recommendation/reader"
 	re "github.com/mcpunzo/k8s-rightsizer/resizeengine"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	v1 "k8s.io/client-go/kubernetes/typed/apps/v1"
+	corev1typed "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 )
 
-func main() {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		fmt.Println("Error resolving executable path")
-		return
-	}
+// --- MOCK IMPLEMENTATION (Per evitare il Panic) ---
 
-	log.Println("--- Start Rightsizer  ---")
+type LocalDryRunClient struct{}
+
+func (m *LocalDryRunClient) AppsV1() v1.AppsV1Interface          { return &mockAppsV1{} }
+func (m *LocalDryRunClient) CoreV1() corev1typed.CoreV1Interface { return &mockCoreV1{} }
+
+type mockAppsV1 struct{ v1.AppsV1Interface }
+
+func (m *mockAppsV1) Deployments(ns string) v1.DeploymentInterface   { return &mockDeploy{ns: ns} }
+func (m *mockAppsV1) StatefulSets(ns string) v1.StatefulSetInterface { return &mockSts{ns: ns} }
+
+type mockCoreV1 struct{ corev1typed.CoreV1Interface }
+
+func (m *mockCoreV1) Pods(ns string) corev1typed.PodInterface { return &mockPods{ns: ns} }
+
+// Mock Deployments
+type mockDeploy struct {
+	v1.DeploymentInterface
+	ns string
+}
+
+func (m *mockDeploy) Get(ctx context.Context, name string, opts metav1.GetOptions) (*appsv1.Deployment, error) {
+	log.Printf("[DRY-RUN] GET Deployment: %s/%s", m.ns, name)
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: m.ns, Generation: 1},
+		Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(1), Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}}},
+		Status:     appsv1.DeploymentStatus{AvailableReplicas: 1, UpdatedReplicas: 1, ObservedGeneration: 1},
+	}, nil
+}
+func (m *mockDeploy) Update(ctx context.Context, d *appsv1.Deployment, opts metav1.UpdateOptions) (*appsv1.Deployment, error) {
+	log.Printf("[DRY-RUN] UPDATE Deployment: %s", d.Name)
+	return d, nil
+}
+
+// Mock StatefulSets
+type mockSts struct {
+	v1.StatefulSetInterface
+	ns string
+}
+
+func (m *mockSts) Get(ctx context.Context, name string, opts metav1.GetOptions) (*appsv1.StatefulSet, error) {
+	log.Printf("[DRY-RUN] GET StatefulSet: %s/%s", m.ns, name)
+	return &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: m.ns, Generation: 1},
+		Spec:       appsv1.StatefulSetSpec{Replicas: int32Ptr(1), Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}}},
+		Status:     appsv1.StatefulSetStatus{AvailableReplicas: 1, UpdatedReplicas: 1, ObservedGeneration: 1},
+	}, nil
+}
+func (m *mockSts) Update(ctx context.Context, s *appsv1.StatefulSet, opts metav1.UpdateOptions) (*appsv1.StatefulSet, error) {
+	log.Printf("[DRY-RUN] UPDATE StatefulSet: %s", s.Name)
+	return s, nil
+}
+
+// Mock Pods
+type mockPods struct {
+	corev1typed.PodInterface
+	ns string
+}
+
+func (m *mockPods) List(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
+	return &corev1.PodList{Items: []corev1.Pod{}}, nil
+}
+
+func int32Ptr(i int32) *int32 { return &i }
+
+// --- MAIN LOGIC ---
+
+func main() {
+	_, currentFile, _, _ := runtime.Caller(0)
+	log.Println("--- Start Rightsizer ---")
 
 	inputFile := filepath.Join(filepath.Dir(currentFile), "..", "data", "test.xlsx")
-	recFile := flag.String("file-path", inputFile, "Recommendation file path (xlsx, xsl")
-	deepResize := flag.Bool("deep-resize", false, "Enable finding deployment from namespace and container name if workload name is not present")
-
+	recFile := flag.String("file-path", inputFile, "Path to recommendations")
+	dryRun := flag.Bool("dry-run", false, "Enable dry-run mode")
 	flag.Parse()
 
-	log.Printf("Recommendation File target: %s", *recFile)
+	// 1. Client Initialization
+	k8sClient, err := getClientset(*dryRun)
+	if err != nil {
+		log.Fatalf("Fatal: %v", err)
+	}
+
+	// 2. Reading Recommendations
 	recReader, err := reader.NewReader(*recFile)
 	if err != nil {
-		log.Fatalf("Error creating reader: %v", err)
+		log.Fatalf("Error reader: %v", err)
 	}
-
-	clientset, err := getClientset()
-	if err != nil {
-		log.Fatalf("Error creating Kubernetes client: %v", err)
-	}
-
 	recs, err := recReader.Read()
 	if err != nil {
-		log.Fatalf("Error reading recommendations: %v", err)
+		log.Fatalf("Error reading: %v", err)
 	}
 
-	engine := resizeEngineBuolder(clientset)
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "deepResize", *deepResize)
-	engine.Resize(ctx, recs)
+	// 3. Execute Engine
+	engine := resizeEngineBuilder(k8sClient)
+	ctx := context.WithValue(context.Background(), "dryRun", *dryRun)
+
+	if err := engine.Resize(ctx, recs); err != nil {
+		log.Printf("Resize process completed with some issues: %v", err)
+	}
 
 	log.Println("--- Rightsizer Complete ---")
 }
 
-func getClientset() (*kubernetes.Clientset, error) {
-	// Try the in-cluster configuration first (for the Job)
+func getClientset(dryRun bool) (re.K8sClient, error) {
+	if dryRun {
+		return &LocalDryRunClient{}, nil
+	}
+
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		// If it fails, try to use the local kubeconfig (for testing from PC)
 		kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("kubeconfig not found: %w", err)
 		}
 	}
-
 	return kubernetes.NewForConfig(config)
 }
 
-// resizeEngineBuolder is a helper function to create a new ResizerEngine instance with the provided Kubernetes client.
-// It initializes the WorkloadSelector and WorkloadResizer with the same client to ensure consistent interactions with the Kubernetes cluster.
-// param client: The Kubernetes client used for interacting with the cluster.
-// returns: A new instance of ResizerEngine.
-func resizeEngineBuolder(client re.K8sClient) *re.ResizerEngine {
+func resizeEngineBuilder(client re.K8sClient) *re.ResizerEngine {
 	selector := re.NewK8sWorkloadSelector(client)
 	resizer := re.NewK8sWorkloadResizer(client)
 	return re.NewResizerEngine(selector, resizer)

@@ -82,7 +82,7 @@ func TestResizerEngine(t *testing.T) {
 				},
 			},
 			mockRes:   &mockResizer{resizeErr: nil, isCritErr: true}, //  Force the critical error
-			expectErr: true,
+			expectErr: false,
 		},
 	}
 

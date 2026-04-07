@@ -12,9 +12,8 @@ const (
 type Recommendation struct {
 	Environment                 string         `json:"Environment"`
 	Namespace                   string         `json:"Namespace"`
-	WorkloadName                string         `json:"WorkloadName,omitempty"`
-	Pod                         string         `json:"Pod"`
 	Type                        DeploymentType `json:"Type"`
+	WorkloadName                string         `json:"WorkloadName"`
 	Container                   string         `json:"Container"`
 	Replicas                    string         `json:"Replicas"`
 	CpuRequest                  string         `json:"CpuRequest"`
@@ -29,11 +28,10 @@ type Recommendation struct {
 
 func (r *Recommendation) String() string {
 	return fmt.Sprintf(
-		"Environment=%s Namespace=%s WorkloadName=%s Pod=%s Type=%s Container=%s Replicas=%s CpuRequest=%s CpuLimit=%s CpuRequestRecommendation=%s CpuLimitRecommendation=%s MemRequest=%s MemLimit=%s MemoryRequestRecommendation=%s MemoryLimitRecommendation=%s",
+		"Environment=%s Namespace=%s WorkloadName=%s Type=%s Container=%s Replicas=%s CpuRequest=%s CpuLimit=%s CpuRequestRecommendation=%s CpuLimitRecommendation=%s MemRequest=%s MemLimit=%s MemoryRequestRecommendation=%s MemoryLimitRecommendation=%s",
 		r.Environment,
 		r.Namespace,
 		r.WorkloadName,
-		r.Pod,
 		r.Type,
 		r.Container,
 		r.Replicas,
@@ -46,4 +44,16 @@ func (r *Recommendation) String() string {
 		r.MemoryRequestRecommendation,
 		r.MemoryLimitRecommendation,
 	)
+}
+
+// DeepCopy creates a deep copy of the Recommendation struct.
+// This is useful for scenarios where you want to modify a copy of the recommendation without affecting the original.
+// returns: A pointer to a new Recommendation struct that is a deep copy of the original.
+func (r *Recommendation) DeepCopy() *Recommendation {
+	if r == nil {
+		return nil
+	}
+
+	newRec := *r
+	return &newRec
 }

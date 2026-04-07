@@ -7,7 +7,6 @@ import (
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/client-go/kubernetes/typed/apps/v1"
 )
@@ -40,9 +39,27 @@ func (m *mockSelectorAppsV1) Deployments(ns string) v1.DeploymentInterface {
 	return m.deployClient
 }
 
+type mockStatefulSetGetter struct {
+	v1.StatefulSetInterface
+	getFunc func(name string) (*appsv1.StatefulSet, error)
+}
+
+func (m *mockStatefulSetGetter) Get(ctx context.Context, name string, opts metav1.GetOptions) (*appsv1.StatefulSet, error) {
+	return m.getFunc(name)
+}
+
+type mockAppsV1Selector struct {
+	v1.AppsV1Interface
+	stsClient v1.StatefulSetInterface
+}
+
+func (m *mockAppsV1Selector) StatefulSets(ns string) v1.StatefulSetInterface {
+	return m.stsClient
+}
+
 // --- TABLE-DRIVEN TESTS ---
 
-func TestFindDeployment_TableDriven(t *testing.T) {
+func TestFindDeployment(t *testing.T) {
 	const (
 		namespace     = "default"
 		containerName = "app-container"
@@ -70,49 +87,6 @@ func TestFindDeployment_TableDriven(t *testing.T) {
 			},
 			wantErr:      false,
 			expectedName: workloadName,
-		},
-		{
-			name: "Success - Deep Search finds container",
-			ctx:  context.WithValue(context.Background(), "deepResize", true),
-			recommendation: model.Recommendation{
-				Namespace:    namespace,
-				WorkloadName: "", // Trigger deep search
-				Container:    containerName,
-			},
-			mockList: func() (*appsv1.DeploymentList, error) {
-				return &appsv1.DeploymentList{
-					Items: []appsv1.Deployment{
-						{
-							ObjectMeta: metav1.ObjectMeta{Name: "wrong-deploy"},
-							Spec: appsv1.DeploymentSpec{
-								Template: corev1.PodTemplateSpec{
-									Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "other"}}},
-								},
-							},
-						},
-						{
-							ObjectMeta: metav1.ObjectMeta{Name: "correct-deploy"},
-							Spec: appsv1.DeploymentSpec{
-								Template: corev1.PodTemplateSpec{
-									Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: containerName}}},
-								},
-							},
-						},
-					},
-				}, nil
-			},
-			wantErr:      false,
-			expectedName: "correct-deploy",
-		},
-		{
-			name: "Error - Deep Search disabled but name missing",
-			ctx:  context.Background(), // deepResize is nil/false
-			recommendation: model.Recommendation{
-				Namespace:    namespace,
-				WorkloadName: "",
-				Container:    containerName,
-			},
-			wantErr: true,
 		},
 		{
 			name: "Error - API Get returns 404",
@@ -152,6 +126,93 @@ func TestFindDeployment_TableDriven(t *testing.T) {
 			// Assert Name Result
 			if !tt.wantErr && got.Name != tt.expectedName {
 				t.Errorf("FindDeployment() got = %v, want %v", got.Name, tt.expectedName)
+			}
+		})
+	}
+}
+
+func TestK8sWorkloadSelector_FindStatefulSet_TableDriven(t *testing.T) {
+	const (
+		testNs   = "prod-db"
+		testName = "postgres"
+	)
+
+	tests := []struct {
+		name           string
+		recommendation *model.Recommendation
+		mockResponse   *appsv1.StatefulSet
+		mockErr        error
+		wantErr        bool
+		expectedName   string
+	}{
+		{
+			name: "Success - StatefulSet found",
+			recommendation: &model.Recommendation{
+				Namespace:    testNs,
+				WorkloadName: testName,
+			},
+			mockResponse: &appsv1.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName,
+					Namespace: testNs,
+				},
+			},
+			mockErr:      nil,
+			wantErr:      false,
+			expectedName: testName,
+		},
+		{
+			name: "Error - StatefulSet not found (API Error)",
+			recommendation: &model.Recommendation{
+				Namespace:    testNs,
+				WorkloadName: "non-existent",
+			},
+			mockResponse: nil,
+			mockErr:      errors.New("statefulsets.apps \"non-existent\" not found"),
+			wantErr:      true,
+		},
+		{
+			name: "Error - Namespace mismatch or empty name",
+			recommendation: &model.Recommendation{
+				Namespace:    "wrong-ns",
+				WorkloadName: "",
+			},
+			mockResponse: nil,
+			mockErr:      errors.New("invalid request"),
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 1. Configurazione del Mock
+			mSts := &mockStatefulSetGetter{
+				getFunc: func(name string) (*appsv1.StatefulSet, error) {
+					return tt.mockResponse, tt.mockErr
+				},
+			}
+			mApps := &mockAppsV1Selector{stsClient: mSts}
+			mClient := &mockK8sClient{appsV1: mApps}
+
+			// 2. Inizializzazione del selettore
+			selector := NewK8sWorkloadSelector(mClient)
+
+			// 3. Esecuzione
+			got, err := selector.FindStatefulSet(context.Background(), tt.recommendation)
+
+			// 4. Verifiche
+			if (err != nil) != tt.wantErr {
+				t.Errorf("FindStatefulSet() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if got == nil {
+					t.Fatal("expected result, got nil")
+				}
+				if got.Name != tt.expectedName {
+					t.Errorf("expected name %s, got %s", tt.expectedName, got.Name)
+				}
 			}
 		})
 	}

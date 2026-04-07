@@ -70,7 +70,6 @@ func (m *mockAppsV1) StatefulSets(ns string) v1.StatefulSetInterface {
 
 // mockK8sClient is our top-level entry point for the Resizer
 type mockK8sClient struct {
-	K8sClient
 	appsV1 v1.AppsV1Interface
 	coreV1 core.CoreV1Interface
 }

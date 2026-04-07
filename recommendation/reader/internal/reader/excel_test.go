@@ -43,44 +43,41 @@ func AssertEqual(t *testing.T, expected []string, actual *model.Recommendation) 
 	if actual.Namespace != expected[1] {
 		t.Errorf("Namespace expected %s, got %s", expected[1], actual.Namespace)
 	}
-	if actual.WorkloadName != expected[2] {
-		t.Errorf("WorkloadName expected %s, got %s", expected[2], actual.WorkloadName)
+	if actual.Type != model.DeploymentType(expected[2]) {
+		t.Errorf("Type expected %s, got %s", expected[2], actual.Type)
 	}
-	if actual.Type != model.DeploymentType(expected[3]) {
-		t.Errorf("Type expected %s, got %s", expected[3], actual.Type)
+	if actual.WorkloadName != expected[3] {
+		t.Errorf("WorkloadName expected %s, got %s", expected[3], actual.WorkloadName)
 	}
-	if actual.Pod != expected[4] {
-		t.Errorf("Pod expected %s, got %s", expected[4], actual.Pod)
+	if actual.Container != expected[4] {
+		t.Errorf("Container expected %s, got %s", expected[4], actual.Container)
 	}
-	if actual.Container != expected[5] {
-		t.Errorf("Container expected %s, got %s", expected[5], actual.Container)
+	if actual.Replicas != expected[5] {
+		t.Errorf("Replicas expected %s, got %s", expected[5], actual.Replicas)
 	}
-	if actual.Replicas != expected[6] {
-		t.Errorf("Replicas expected %s, got %s", expected[6], actual.Replicas)
+	if actual.CpuRequest != NormalizeNumericData(expected[6], "m") {
+		t.Errorf("CPU Request expected %s, got %s", expected[6], actual.CpuRequest)
 	}
-	if actual.CpuRequest != NormalizeNumericData(expected[7], "m") {
-		t.Errorf("CPU Request expected %s, got %s", expected[7], actual.CpuRequest)
+	if actual.CpuLimit != NormalizeNumericData(expected[7], "m") {
+		t.Errorf("CPU Limit expected %s, got %s", expected[7], actual.CpuLimit)
 	}
-	if actual.CpuLimit != NormalizeNumericData(expected[8], "m") {
-		t.Errorf("CPU Limit expected %s, got %s", expected[8], actual.CpuLimit)
+	if actual.CpuRequestRecommendation != NormalizeNumericData(expected[8], "m") {
+		t.Errorf("CPU Rec expected %s, got %s", expected[8], actual.CpuRequestRecommendation)
 	}
-	if actual.CpuRequestRecommendation != NormalizeNumericData(expected[9], "m") {
-		t.Errorf("CPU Rec expected %s, got %s", expected[9], actual.CpuRequestRecommendation)
+	if actual.CpuLimitRecommendation != NormalizeNumericData(expected[9], "m") {
+		t.Errorf("CPU Lim Rec expected %s, got %s", expected[9], actual.CpuLimitRecommendation)
 	}
-	if actual.CpuLimitRecommendation != NormalizeNumericData(expected[10], "m") {
-		t.Errorf("CPU Lim Rec expected %s, got %s", expected[10], actual.CpuLimitRecommendation)
+	if actual.MemRequest != NormalizeNumericData(expected[10], "Mi") {
+		t.Errorf("Mem Request expected %s, got %s", expected[10], actual.MemRequest)
 	}
-	if actual.MemRequest != NormalizeNumericData(expected[11], "Mi") {
-		t.Errorf("Mem Request expected %s, got %s", expected[11], actual.MemRequest)
+	if actual.MemLimit != NormalizeNumericData(expected[11], "Mi") {
+		t.Errorf("Mem Limit expected %s, got %s", expected[11], actual.MemLimit)
 	}
-	if actual.MemLimit != NormalizeNumericData(expected[12], "Mi") {
-		t.Errorf("Mem Limit expected %s, got %s", expected[12], actual.MemLimit)
+	if actual.MemoryRequestRecommendation != NormalizeNumericData(expected[12], "Mi") {
+		t.Errorf("Mem Rec expected %s, got %s", expected[12], actual.MemoryRequestRecommendation)
 	}
-	if actual.MemoryRequestRecommendation != NormalizeNumericData(expected[13], "Mi") {
-		t.Errorf("Mem Rec expected %s, got %s", expected[13], actual.MemoryRequestRecommendation)
-	}
-	if actual.MemoryLimitRecommendation != NormalizeNumericData(expected[14], "Mi") {
-		t.Errorf("Mem Lim Rec expected %s, got %s", expected[14], actual.MemoryLimitRecommendation)
+	if actual.MemoryLimitRecommendation != NormalizeNumericData(expected[13], "Mi") {
+		t.Errorf("Mem Lim Rec expected %s, got %s", expected[13], actual.MemoryLimitRecommendation)
 	}
 }
 
