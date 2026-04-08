@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "k8s-rightsizer-helm.fullname" . }}-job
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+    checksum/config: {{ include (print $.Template.BasePath "/storage.yaml") . | sha256sum }}
+spec:
+  template:
+    metadata:
+      labels:
+        app: {{ include "k8s-rightsizer-helm.fullname" . }}
+    spec:
+      serviceAccountName: {{ include "k8s-rightsizer-helm.fullname" . }}
+      containers:
+      - name: rightsizer
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args: 
+          - "--file-path"
+          - "{{ .Values.recommendations.mountPath }}/{{ .Values.recommendations.fileName }}"
+        volumeMounts:
+        - name: recommendations-storage
+          mountPath: {{ .Values.recommendations.mountPath }}
+      volumes:
+      - name: recommendations-storage
+        persistentVolumeClaim:
+          claimName: {{ .Values.recommendations.pvcName }}
+      restartPolicy: OnFailure
+  backoffLimit: 1

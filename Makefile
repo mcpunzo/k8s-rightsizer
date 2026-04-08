@@ -16,9 +16,8 @@ test: clean ## Run tests
 	go test -v --cover ./...
 
 .PHONY: build-bin
-build-bin: clean ## Build the binary
+build-bin: ## Build the binary
 	@echo "Compiling..."
-	CGO_ENABLED=0 GOOS=linux go clean ./...
 	CGO_ENABLED=0 GOOS=linux go build -o bin/$(APP_NAME) cmd/main.go
 
 .PHONY: docker-build

@@ -1,0 +1,31 @@
+{{- if .Values.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "k8s-rightsizer-helm.fullname" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "k8s-rightsizer-helm.fullname" . }}-role
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "k8s-rightsizer-helm.fullname" . }}-binding
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "k8s-rightsizer-helm.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ include "k8s-rightsizer-helm.fullname" . }}-role
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

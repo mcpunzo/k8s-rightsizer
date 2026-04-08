@@ -1,0 +1,19 @@
+image:
+  repository: localhost/k8s-rightsizer
+  # For local development, we can set the pull policy to Never to use the locally built image
+  pullPolicy: Never 
+  tag: "local"
+
+storage:
+  create: true
+  size: 1Gi
+  accessMode: ReadWriteOnce
+  storageClass: manual
+  # Path within the minikube node. 
+  # Note: You must have run 'minikube mount /your/pc/data:/mnt/data'
+  hostPath: "/mnt/data"
+
+# Recommendations configuration
+recommendations:
+  pvcName: "recommendations-data-pvc" # The PVC where you upload the files
+

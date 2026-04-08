@@ -93,7 +93,7 @@ func main() {
 	_, currentFile, _, _ := runtime.Caller(0)
 	log.Println("--- Start Rightsizer ---")
 
-	inputFile := filepath.Join(filepath.Dir(currentFile), "..", "data", "test.xlsx")
+	inputFile := filepath.Join(filepath.Dir(currentFile), "..", "data", "recommendations.xlsx")
 	recFile := flag.String("file-path", inputFile, "Path to recommendations")
 	dryRun := flag.Bool("dry-run", false, "Enable dry-run mode")
 	flag.Parse()

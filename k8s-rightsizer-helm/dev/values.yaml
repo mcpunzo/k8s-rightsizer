@@ -1,0 +1,15 @@
+image:
+  repository: docker-registry/rightsizer #todo changeme
+  pullPolicy: always
+  tag: "latest"
+
+storage:
+  create: true # If the cluster has dynamic provisioning, you might set this to false and create only the PVC
+  size: 5Gi
+  accessMode: ReadWriteMany
+  storageClass: "standard" # Or "longhorn", "azurefile", etc.
+  hostPath: "" # Not used in remote environments
+
+# Recommendations configuration
+recommendations:
+  pvcName: "recommendations-data-pvc" # The PVC where you upload the files
