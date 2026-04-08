@@ -115,7 +115,7 @@ func main() {
 	}
 
 	// 3. Execute Engine
-	engine := resizeEngineBuilder(k8sClient)
+	engine := re.NewWorkloadResizer(k8sClient)
 	ctx := context.WithValue(context.Background(), "dryRun", *dryRun)
 
 	if err := engine.Resize(ctx, recs); err != nil {
@@ -139,10 +139,4 @@ func getClientset(dryRun bool) (re.K8sClient, error) {
 		}
 	}
 	return kubernetes.NewForConfig(config)
-}
-
-func resizeEngineBuilder(client re.K8sClient) *re.ResizerEngine {
-	selector := re.NewK8sWorkloadSelector(client)
-	resizer := re.NewK8sWorkloadResizer(client)
-	return re.NewResizerEngine(selector, resizer)
 }
