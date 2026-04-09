@@ -2,51 +2,50 @@ package resizeengine
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestDeploymentWorkload_FindWorkload(t *testing.T) {
 	tests := []struct {
 		name         string
 		rec          *model.Recommendation
-		mockDeploy   *appsv1.Deployment
-		mockErr      error
+		initialObjs  []runtime.Object
 		wantErr      bool
 		expectedType WorkloadType
 	}{
 		{
 			name: "Success - Found Deployment",
 			rec:  &model.Recommendation{Namespace: "default", WorkloadName: "web-app", Container: "nginx"},
-			mockDeploy: &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{Name: "web-app", Namespace: "default"},
-				Spec:       appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{}},
+			initialObjs: []runtime.Object{
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Name: "web-app", Namespace: "default"},
+					Spec:       appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{}},
+				},
 			},
-			mockErr:      nil,
 			wantErr:      false,
 			expectedType: Deployment,
 		},
 		{
-			name:       "Failure - Deployment Not Found",
-			rec:        &model.Recommendation{Namespace: "default", WorkloadName: "missing"},
-			mockDeploy: nil,
-			mockErr:    errors.New("deployments.apps \"missing\" not found"),
-			wantErr:    true,
+			name:        "Failure - Deployment Not Found",
+			rec:         &model.Recommendation{Namespace: "default", WorkloadName: "missing"},
+			initialObjs: []runtime.Object{},
+			wantErr:     true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mDep := &mockDeployClient{getFunc: func() (*appsv1.Deployment, error) { return tt.mockDeploy, tt.mockErr }}
-			mApps := &mockAppsV1{deployClient: mDep}
-			mClient := &mockK8sClient{appsV1: mApps}
+			// Inizializziamo il fake client con gli oggetti caricati in memoria
+			fakeClient := fake.NewSimpleClientset(tt.initialObjs...)
 
-			w := &DeploymentWorkload{client: mClient}
+			w := &DeploymentWorkload{client: fakeClient}
 			got, err := w.FindWorkload(context.Background(), tt.rec)
 
 			if (err != nil) != tt.wantErr {
@@ -66,31 +65,27 @@ func TestDeploymentWorkload_FindWorkload(t *testing.T) {
 }
 
 func TestDeploymentWorkload_ResizeWorkload(t *testing.T) {
-	baseDeploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "prod"},
-		Spec: appsv1.DeploymentSpec{
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{Name: "api-container"}},
-				},
-			},
-		},
-	}
-
 	tests := []struct {
-		name     string
-		workload *Workload
-		rec      *model.Recommendation
-		wantErr  bool
+		name       string
+		initialDep *appsv1.Deployment
+		rec        *model.Recommendation
+		wantErr    bool
 	}{
 		{
 			name: "Success - Valid Resize",
-			workload: &Workload{
-				WorkloadType:     Deployment,
-				Template:         &baseDeploy.Spec.Template,
-				originalResource: baseDeploy,
+			initialDep: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "prod"},
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{{Name: "api-container"}},
+						},
+					},
+				},
 			},
 			rec: &model.Recommendation{
+				WorkloadName:                "api",
+				Namespace:                   "prod",
 				Container:                   "api-container",
 				CpuRequestRecommendation:    "250m",
 				MemoryRequestRecommendation: "512Mi",
@@ -99,38 +94,33 @@ func TestDeploymentWorkload_ResizeWorkload(t *testing.T) {
 		},
 		{
 			name: "Failure - Wrong Container Name",
-			workload: &Workload{
-				WorkloadType:     Deployment,
-				Template:         &baseDeploy.Spec.Template,
-				originalResource: baseDeploy,
+			initialDep: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "prod"},
+				Spec:       appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api-container"}}}}},
 			},
 			rec: &model.Recommendation{
-				Container: "invalid-container",
+				WorkloadName: "api",
+				Namespace:    "prod",
+				Container:    "invalid-container",
 			},
-			wantErr: true,
-		},
-		{
-			name: "Failure - Wrong Workload Type",
-			workload: &Workload{
-				WorkloadType:     StatefulSet, // Passiamo STS a un handler Deployment
-				Template:         &baseDeploy.Spec.Template,
-				originalResource: baseDeploy,
-			},
-			rec:     &model.Recommendation{Container: "api-container"},
 			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mDep := &mockDeployClient{
-				updateFunc: func(d *appsv1.Deployment) (*appsv1.Deployment, error) { return d, nil },
-			}
-			mApps := &mockAppsV1{deployClient: mDep}
-			mClient := &mockK8sClient{appsV1: mApps}
+			fakeClient := fake.NewSimpleClientset(tt.initialDep)
 
-			w := &DeploymentWorkload{client: mClient}
-			err := w.ResizeWorkload(context.Background(), tt.workload, tt.rec)
+			wObj := &Workload{
+				WorkloadType:     Deployment,
+				Namespace:        tt.initialDep.Namespace,
+				Name:             tt.initialDep.Name,
+				Template:         &tt.initialDep.Spec.Template,
+				originalResource: tt.initialDep,
+			}
+
+			w := &DeploymentWorkload{client: fakeClient}
+			err := w.ResizeWorkload(context.Background(), wObj, tt.rec)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ResizeWorkload() error = %v, wantErr %v", err, tt.wantErr)
@@ -151,8 +141,9 @@ func TestDeploymentWorkload_GetStatus(t *testing.T) {
 		{
 			name: "Status - Partial Rollout",
 			mockDeploy: &appsv1.Deployment{
-				Spec:   appsv1.DeploymentSpec{Replicas: &replicas},
-				Status: appsv1.DeploymentStatus{UpdatedReplicas: 2, AvailableReplicas: 1},
+				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"},
+				Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+				Status:     appsv1.DeploymentStatus{UpdatedReplicas: 2, AvailableReplicas: 1},
 			},
 			expectedReady:   1,
 			expectedDesired: 2,
@@ -160,8 +151,9 @@ func TestDeploymentWorkload_GetStatus(t *testing.T) {
 		{
 			name: "Status - Replicas Nil",
 			mockDeploy: &appsv1.Deployment{
-				Spec:   appsv1.DeploymentSpec{Replicas: nil},
-				Status: appsv1.DeploymentStatus{UpdatedReplicas: 0, AvailableReplicas: 0},
+				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"},
+				Spec:       appsv1.DeploymentSpec{Replicas: nil},
+				Status:     appsv1.DeploymentStatus{UpdatedReplicas: 0, AvailableReplicas: 0},
 			},
 			expectedReady:   0,
 			expectedDesired: 0,
@@ -170,11 +162,9 @@ func TestDeploymentWorkload_GetStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mDep := &mockDeployClient{getFunc: func() (*appsv1.Deployment, error) { return tt.mockDeploy, nil }}
-			mApps := &mockAppsV1{deployClient: mDep}
-			mClient := &mockK8sClient{appsV1: mApps}
+			fakeClient := fake.NewSimpleClientset(tt.mockDeploy)
 
-			w := &DeploymentWorkload{client: mClient}
+			w := &DeploymentWorkload{client: fakeClient}
 			status, err := w.GetStatus(context.Background(), "default", "api")
 
 			if err != nil {

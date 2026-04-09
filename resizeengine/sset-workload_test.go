@@ -2,52 +2,50 @@ package resizeengine
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestStatefulSetWorkload_FindWorkload(t *testing.T) {
 	tests := []struct {
 		name         string
 		rec          *model.Recommendation
-		mockSts      *appsv1.StatefulSet
-		mockErr      error
+		initialObjs  []runtime.Object // Oggetti presenti nel cluster fake
 		wantErr      bool
 		expectedType WorkloadType
 	}{
 		{
 			name: "Success - Found StatefulSet",
 			rec:  &model.Recommendation{Namespace: "prod", WorkloadName: "db", Container: "postgres"},
-			mockSts: &appsv1.StatefulSet{
-				ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "prod"},
-				Spec:       appsv1.StatefulSetSpec{Template: corev1.PodTemplateSpec{}},
+			initialObjs: []runtime.Object{
+				&appsv1.StatefulSet{
+					ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "prod"},
+					Spec:       appsv1.StatefulSetSpec{Template: corev1.PodTemplateSpec{}},
+				},
 			},
-			mockErr:      nil,
 			wantErr:      false,
 			expectedType: StatefulSet,
 		},
 		{
-			name:    "Failure - StatefulSet Not Found",
-			rec:     &model.Recommendation{Namespace: "prod", WorkloadName: "ghost"},
-			mockSts: nil,
-			mockErr: errors.New("statefulsets.apps \"ghost\" not found"),
-			wantErr: true,
+			name:        "Failure - StatefulSet Not Found",
+			rec:         &model.Recommendation{Namespace: "prod", WorkloadName: "ghost"},
+			initialObjs: []runtime.Object{}, // Cluster vuoto
+			wantErr:     true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup mock chain
-			mSts := &mockStsClient{getFunc: func() (*appsv1.StatefulSet, error) { return tt.mockSts, tt.mockErr }}
-			mApps := &mockAppsV1{stsClient: mSts}
-			mClient := &mockK8sClient{appsV1: mApps}
+			// Inizializza il fake client con gli oggetti iniziali
+			fakeClient := fake.NewSimpleClientset(tt.initialObjs...)
 
-			w := &StatefulSetWorkload{client: mClient}
+			w := &StatefulSetWorkload{client: fakeClient}
 			got, err := w.FindWorkload(context.Background(), tt.rec)
 
 			if (err != nil) != tt.wantErr {
@@ -67,32 +65,27 @@ func TestStatefulSetWorkload_FindWorkload(t *testing.T) {
 }
 
 func TestStatefulSetWorkload_ResizeWorkload(t *testing.T) {
-	// Template di base per i test di resize
-	baseSts := &appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "my-sts", Namespace: "default"},
-		Spec: appsv1.StatefulSetSpec{
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{Name: "main-app"}},
-				},
-			},
-		},
-	}
-
 	tests := []struct {
-		name     string
-		workload *Workload
-		rec      *model.Recommendation
-		wantErr  bool
+		name       string
+		initialSts *appsv1.StatefulSet
+		rec        *model.Recommendation
+		wantErr    bool
 	}{
 		{
 			name: "Success - Resize Main Container",
-			workload: &Workload{
-				WorkloadType:     StatefulSet,
-				Template:         &baseSts.Spec.Template,
-				originalResource: baseSts,
+			initialSts: &appsv1.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-sts", Namespace: "default"},
+				Spec: appsv1.StatefulSetSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{{Name: "main-app"}},
+						},
+					},
+				},
 			},
 			rec: &model.Recommendation{
+				WorkloadName:                "my-sts",
+				Namespace:                   "default",
 				Container:                   "main-app",
 				CpuRequestRecommendation:    "500m",
 				MemoryRequestRecommendation: "1Gi",
@@ -101,13 +94,20 @@ func TestStatefulSetWorkload_ResizeWorkload(t *testing.T) {
 		},
 		{
 			name: "Failure - Container Name Not Found",
-			workload: &Workload{
-				WorkloadType:     StatefulSet,
-				Template:         &baseSts.Spec.Template,
-				originalResource: baseSts,
+			initialSts: &appsv1.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-sts", Namespace: "default"},
+				Spec: appsv1.StatefulSetSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{{Name: "main-app"}},
+						},
+					},
+				},
 			},
 			rec: &model.Recommendation{
-				Container: "wrong-container",
+				WorkloadName: "my-sts",
+				Namespace:    "default",
+				Container:    "wrong-container",
 			},
 			wantErr: true,
 		},
@@ -115,14 +115,19 @@ func TestStatefulSetWorkload_ResizeWorkload(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mSts := &mockStsClient{
-				updateFunc: func(s *appsv1.StatefulSet) (*appsv1.StatefulSet, error) { return s, nil },
-			}
-			mApps := &mockAppsV1{stsClient: mSts}
-			mClient := &mockK8sClient{appsV1: mApps}
+			fakeClient := fake.NewSimpleClientset(tt.initialSts)
 
-			w := &StatefulSetWorkload{client: mClient}
-			err := w.ResizeWorkload(context.Background(), tt.workload, tt.rec)
+			// Prepariamo l'oggetto Workload che verrebbe creato da FindWorkload
+			wObj := &Workload{
+				WorkloadType:     StatefulSet,
+				Namespace:        tt.initialSts.Namespace,
+				Name:             tt.initialSts.Name,
+				Template:         &tt.initialSts.Spec.Template,
+				originalResource: tt.initialSts,
+			}
+
+			w := &StatefulSetWorkload{client: fakeClient}
+			err := w.ResizeWorkload(context.Background(), wObj, tt.rec)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ResizeWorkload() error = %v, wantErr %v", err, tt.wantErr)
@@ -143,8 +148,9 @@ func TestStatefulSetWorkload_GetStatus(t *testing.T) {
 		{
 			name: "Status - Fully Ready",
 			mockSts: &appsv1.StatefulSet{
-				Spec:   appsv1.StatefulSetSpec{Replicas: &replicas},
-				Status: appsv1.StatefulSetStatus{UpdatedReplicas: 3, AvailableReplicas: 3},
+				ObjectMeta: metav1.ObjectMeta{Name: "sts", Namespace: "default"},
+				Spec:       appsv1.StatefulSetSpec{Replicas: &replicas},
+				Status:     appsv1.StatefulSetStatus{UpdatedReplicas: 3, AvailableReplicas: 3},
 			},
 			expectedReady:   3,
 			expectedDesired: 3,
@@ -152,8 +158,9 @@ func TestStatefulSetWorkload_GetStatus(t *testing.T) {
 		{
 			name: "Status - Zero Replicas (Pointer Check)",
 			mockSts: &appsv1.StatefulSet{
-				Spec:   appsv1.StatefulSetSpec{Replicas: nil}, // Simuliamo puntatore nil
-				Status: appsv1.StatefulSetStatus{UpdatedReplicas: 0, AvailableReplicas: 0},
+				ObjectMeta: metav1.ObjectMeta{Name: "sts", Namespace: "default"},
+				Spec:       appsv1.StatefulSetSpec{Replicas: nil},
+				Status:     appsv1.StatefulSetStatus{UpdatedReplicas: 0, AvailableReplicas: 0},
 			},
 			expectedReady:   0,
 			expectedDesired: 0,
@@ -162,11 +169,9 @@ func TestStatefulSetWorkload_GetStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mSts := &mockStsClient{getFunc: func() (*appsv1.StatefulSet, error) { return tt.mockSts, nil }}
-			mApps := &mockAppsV1{stsClient: mSts}
-			mClient := &mockK8sClient{appsV1: mApps}
+			fakeClient := fake.NewSimpleClientset(tt.mockSts)
 
-			w := &StatefulSetWorkload{client: mClient}
+			w := &StatefulSetWorkload{client: fakeClient}
 			status, err := w.GetStatus(context.Background(), "default", "sts")
 
 			if err != nil {
