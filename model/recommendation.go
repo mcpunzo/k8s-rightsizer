@@ -5,8 +5,8 @@ import "fmt"
 type DeploymentType string
 
 const (
-	ReplicaSet DeploymentType = "ReplicaSet"
-	StatefuSet DeploymentType = "StatefuSet"
+	ReplicaSet  DeploymentType = "ReplicaSet"
+	StatefulSet DeploymentType = "StatefuSet"
 )
 
 type Recommendation struct {

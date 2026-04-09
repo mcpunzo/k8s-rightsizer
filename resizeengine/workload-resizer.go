@@ -15,6 +15,7 @@ import (
 const (
 	workloadCheckInterval = 10 * time.Second
 	workloadCheckTimeout  = 5 * time.Minute
+	//numberOfWorkers       = 3
 )
 
 // Resizer defines the interface for the resizer that processes recommendations and performs resizing operations on workloads.
@@ -41,6 +42,9 @@ func NewWorkloadResizer(client K8sClient) *WorkloadResizer {
 // param recs: A slice of Recommendations to be processed.
 // returns: An error if any issues occur during processing, resizing, or rollback operations.
 func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendation) error {
+	deploymentWorkload := &DeploymentWorkload{client: r.client}
+	statefulSetWorkload := &StatefulSetWorkload{client: r.client}
+
 	for _, rec := range recs {
 		log.Printf("Processing %s\n", rec)
 
@@ -48,9 +52,9 @@ func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendatio
 		var workload WorkloadOps
 		switch rec.Type {
 		case model.ReplicaSet:
-			workload = &DeploymentWorkload{client: r.client}
-		case model.StatefuSet:
-			workload = &StatefulSetWorkload{client: r.client}
+			workload = deploymentWorkload
+		case model.StatefulSet:
+			workload = statefulSetWorkload
 		default:
 			err = fmt.Errorf("unsupported resource type for %s", rec.Type)
 		}
@@ -67,6 +71,7 @@ func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendatio
 		}
 
 		log.Printf("[OK] Resource resized for %s\n", rec)
+		time.Sleep(1 * time.Second) // Small delay between processing recommendations to avoid overwhelming the cluster
 	}
 
 	return nil
