@@ -46,18 +46,26 @@ func (w *StatefulSetWorkload) FindWorkload(ctx context.Context, rec *model.Recom
 func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Workload, rec *model.Recommendation) error {
 	log.Printf("Resizing Workload: %s/%s\n", workload.Namespace, workload.Name)
 
-	if !ResizeContainer(ctx, workload.Template, rec) {
-		return fmt.Errorf("container %s not found in statefulset %s", rec.Container, workload.Name)
-	}
-
 	if workload.WorkloadType != StatefulSet {
 		return fmt.Errorf("invalid workload type: expected StatefulSet, got %s", workload.WorkloadType)
+	}
+
+	if !ResizeContainer(ctx, workload.Template, rec) {
+		return fmt.Errorf("container %s not found in statefulset %s or resources already match recommendation", rec.Container, workload.Name)
 	}
 
 	statefulSet, ok := workload.originalResource.(*appsv1.StatefulSet)
 	if !ok {
 		return fmt.Errorf("failed to cast original resource to StatefulSet for %s", workload.Name)
 	}
+
+	dryRun := ctx.Value("dryRun")
+
+	if dryRun != nil && dryRun.(bool) {
+		log.Printf("[Dry-Run] Would update statefulset %s/%s with new resources\n", workload.Namespace, workload.Name)
+		return nil
+	}
+
 	_, err := w.client.AppsV1().StatefulSets(rec.Namespace).Update(ctx, statefulSet, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update statefulset %s: %w", workload.Name, err)

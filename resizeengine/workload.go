@@ -2,6 +2,7 @@ package resizeengine
 
 import (
 	"context"
+	"log"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	corev1 "k8s.io/api/core/v1"
@@ -55,9 +56,21 @@ type Workload struct {
 func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, rec *model.Recommendation) bool {
 	for i, c := range podTemplate.Spec.Containers {
 		if c.Name == rec.Container {
+
+			recommendedCPU := resource.MustParse(rec.CpuRequestRecommendation)
+			recommendedMem := resource.MustParse(rec.MemoryRequestRecommendation)
+
+			currentCPU := c.Resources.Requests.Cpu()
+			currentMem := c.Resources.Requests.Memory()
+
+			if currentCPU.Equal(recommendedCPU) && currentMem.Equal(recommendedMem) {
+				log.Printf("Container %s: resources match recommendation, skipping update", c.Name)
+				return false
+			}
+
 			podTemplate.Spec.Containers[i].Resources.Requests = corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(rec.CpuRequestRecommendation),
-				corev1.ResourceMemory: resource.MustParse(rec.MemoryRequestRecommendation),
+				corev1.ResourceCPU:    recommendedCPU,
+				corev1.ResourceMemory: recommendedMem,
 			}
 			return true
 		}

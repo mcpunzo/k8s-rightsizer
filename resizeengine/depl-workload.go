@@ -49,18 +49,26 @@ func (w *DeploymentWorkload) FindWorkload(ctx context.Context, rec *model.Recomm
 func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workload, rec *model.Recommendation) error {
 	log.Printf("Resizing Workload: %s/%s\n", workload.Namespace, workload.Name)
 
-	if !ResizeContainer(ctx, workload.Template, rec) {
-		return fmt.Errorf("container %s not found in deployment %s", rec.Container, workload.Name)
-	}
-
 	if workload.WorkloadType != Deployment {
 		return fmt.Errorf("invalid workload type: expected Deployment, got %s", workload.WorkloadType)
+	}
+
+	if !ResizeContainer(ctx, workload.Template, rec) {
+		return fmt.Errorf("container %s not found in deployment %s or resources already match recommendation", rec.Container, workload.Name)
 	}
 
 	deployment, ok := workload.originalResource.(*appsv1.Deployment)
 	if !ok {
 		return fmt.Errorf("failed to cast original resource to Deployment for %s", workload.Name)
 	}
+
+	dryRun := ctx.Value("dryRun")
+
+	if dryRun != nil && dryRun.(bool) {
+		log.Printf("[Dry-Run] Would update deployment %s/%s with new resources\n", workload.Namespace, workload.Name)
+		return nil
+	}
+
 	_, err := w.client.AppsV1().Deployments(rec.Namespace).Update(ctx, deployment, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update deployment %s: %w", workload.Name, err)

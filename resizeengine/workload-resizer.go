@@ -12,6 +12,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
+const (
+	workloadCheckInterval = 10 * time.Second
+	workloadCheckTimeout  = 5 * time.Minute
+)
+
 // Resizer defines the interface for the resizer that processes recommendations and performs resizing operations on workloads.
 type Resizer interface {
 	Resize(ctx context.Context, rec []model.Recommendation) error
@@ -94,7 +99,7 @@ func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recomme
 
 	// 4. Check status with polling and timeout
 	checkStatusFunc := r.CheckWorkloadStatus(ctx, w, workload.Namespace, workload.Name)
-	err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 5*time.Minute, false, checkStatusFunc)
+	err = wait.PollUntilContextTimeout(ctx, workloadCheckInterval, workloadCheckTimeout, false, checkStatusFunc)
 
 	if err != nil {
 		log.Printf("[!!!] ERROR: %v. Rollback Started %s/%s", err, workload.Namespace, workload.Name)
@@ -120,7 +125,7 @@ func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recomme
 		return fmt.Errorf("update canceled and rollback completed successfully: %v", err)
 	}
 
-	log.Printf("[SUCCESS] %s/%s aggiornato e stabile", workload.Namespace, workload.Name)
+	log.Printf("[SUCCESS] %s/%s updated and stable", workload.Namespace, workload.Name)
 	return nil
 }
 
