@@ -9,13 +9,14 @@ import (
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
-	workloadCheckInterval = 10 * time.Second
-	workloadCheckTimeout  = 5 * time.Minute
-	//numberOfWorkers       = 3
+	WorkloadCheckInterval   = 10 * time.Second
+	DeploymentCheckTimeout  = 5 * time.Minute
+	StatefulsetCheckTimeout = 15 * time.Minute
 )
 
 // Resizer defines the interface for the resizer that processes recommendations and performs resizing operations on workloads.
@@ -50,13 +51,13 @@ func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendatio
 
 		var err error
 		var workload WorkloadOps
-		switch rec.Type {
+		switch rec.Kind {
 		case model.ReplicaSet:
 			workload = deploymentWorkload
 		case model.StatefulSet:
 			workload = statefulSetWorkload
 		default:
-			err = fmt.Errorf("unsupported resource type for %s", rec.Type)
+			err = fmt.Errorf("unsupported resource Kind for %s", rec.Kind)
 		}
 
 		if err != nil {
@@ -85,16 +86,22 @@ func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendatio
 // param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
 // returns: An error if any issues occur during processing, resizing, or rollback operations.
 func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recommendation, w WorkloadOps) error {
-	//1. retrieve the current workload
+	//retrieve the current workload
 	workload, err := w.FindWorkload(ctx, rec)
 	if err != nil {
 		return err
 	}
-	if workload == nil {
-		return fmt.Errorf("workload not found for %s", rec)
+
+	tryResize, err := r.ResizePrecheck(ctx, rec, w, workload)
+	if err != nil {
+		return err
 	}
 
-	// 2. Deep copy in case of rollback
+	if !tryResize {
+		return nil
+	}
+
+	// Deep copy in case of rollback
 	originalTemplate := workload.Template.DeepCopy()
 
 	err = w.ResizeWorkload(ctx, workload, rec)
@@ -102,9 +109,14 @@ func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recomme
 		return fmt.Errorf("failed to update workload for %s: %v", rec, err)
 	}
 
-	// 4. Check status with polling and timeout
-	checkStatusFunc := r.CheckWorkloadStatus(ctx, w, workload.Namespace, workload.Name)
-	err = wait.PollUntilContextTimeout(ctx, workloadCheckInterval, workloadCheckTimeout, false, checkStatusFunc)
+	// Check status with polling and timeout
+	workloadCheckTimeout := DeploymentCheckTimeout
+	if workload.WorkloadType == StatefulSet {
+		workloadCheckTimeout = StatefulsetCheckTimeout
+	}
+
+	checkStatusFunc := r.CheckWorkloadStatus(ctx, w, workload)
+	err = wait.PollUntilContextTimeout(ctx, WorkloadCheckInterval, workloadCheckTimeout, false, checkStatusFunc)
 
 	if err != nil {
 		log.Printf("[!!!] ERROR: %v. Rollback Started %s/%s", err, workload.Namespace, workload.Name)
@@ -134,6 +146,68 @@ func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recomme
 	return nil
 }
 
+// ResizePrecheck performs pre-checks before resizing the workload, such as checking for PDB restrictions and UpdateStrategy settings.
+// It returns a boolean indicating whether the resize operation should proceed and an error if any issues are detected that would prevent resizing.
+// param ctx: The context for managing request deadlines and cancellation.
+// param rec: The Recommendation containing the new resource requests and target container information.
+// param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
+// param workload: The Workload struct representing the workload to be resized.
+// returns: A boolean indicating whether the resize operation should proceed, and an error if any issues are detected that would prevent resizing.
+func (r *WorkloadResizer) ResizePrecheck(ctx context.Context, rec *model.Recommendation, w WorkloadOps, workload *Workload) (bool, error) {
+	if workload == nil {
+		return false, fmt.Errorf("workload not found for %s", rec)
+	}
+
+	// check if the workload is in a paused state
+	pause, err := w.IsWorkloadInPausedState(ctx, workload)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if workload is paused for %s: %v", rec, err)
+	}
+	if pause {
+		return false, fmt.Errorf("skipping resize as workload is paused for %s", rec)
+	}
+
+	// Check any PDB restrictions before resizing
+	IsPDBTooRestrictive, err := r.IsPDBTooRestrictive(ctx, workload.Namespace, workload.LabelSelector)
+	if err != nil {
+		//TODO this may be configurable: we can decide to fail immediately if we cannot check PDBs, or to proceed with a warning. For now, let's proceed with a warning, but log the error.
+		log.Printf("failed to check PDB restrictions for %s: %v. Proceeding with resize, but be aware of potential disruptions.\n", rec, err)
+	}
+	if IsPDBTooRestrictive {
+		return false, fmt.Errorf("skipping resize due to PDB restrictions for %s: resizing may cause disruption", rec)
+	}
+
+	// check UpdateStrategy of the workload and skip if it's set to OnDelete (for Statefulset) or Recreate (for Deployment) to avoid triggering a rollout that may cause downtime. This can be done by retrieving the current UpdateStrategy of the workload and checking its type before proceeding with the resize operation.
+	switch workload.UpdateStrategy {
+	case "OnDelete":
+		return false, fmt.Errorf("skipping resize due to UpdateStrategy set OnDelete for %s: resizing would have no effect", rec)
+	case "Recreate":
+		//TODO: we could make this configurable by allowing the user to choose whether to proceed with a warning or to skip, but for now let's skip to be safe.
+		return false, fmt.Errorf("skipping resize due to UpdateStrategy set Recreate for %s: resizing may cause downtime", rec)
+	}
+	// if we are here, it means that the UpdateStrategy is RollingUpdate, so we can proceed with the resize operation.
+	// we could add another check on statefulset and check if the partition is set to 0, which means that all pods will be updated at once, and in that case we could skip the resize to avoid potential downtime. This can be done by retrieving the current UpdateStrategy of the statefulset and checking the partition value before proceeding with the resize operation.
+
+	status, err := w.GetStatus(ctx, workload)
+	if err != nil {
+		return false, fmt.Errorf("failed to get status for %s: %v", rec, err)
+	}
+	if status.AvailableReplicas < status.ExpectedReplicas {
+		return false, fmt.Errorf("skipping resize due to adegraded state observed for %s: %v", rec, err)
+	}
+
+	if status.UpdatedReplicas < status.ExpectedReplicas {
+		return false, fmt.Errorf("skipping resize as we are in the middle of a rollout for %s: %v", rec, err)
+	}
+
+	isThereAnError, reason := r.CheckPodCriticalErrors(ctx, workload)
+	if isThereAnError {
+		return false, fmt.Errorf("skipping resize due to critical error detected in pods for %s: %s", rec, reason)
+	}
+
+	return true, nil
+}
+
 // CreateRollbackRecommendation creates a new Recommendation based on the original resource values from the PodTemplateSpec for rollback purposes.
 // It returns a new Recommendation with the original CPU and Memory requests for the target container, or nil if the container is not found in the template.
 // param rec: The original Recommendation containing the namespace, workload name, and container information.
@@ -158,33 +232,32 @@ func (r *WorkloadResizer) CreateRollbackRecommendation(rec *model.Recommendation
 // param ctx: The context for managing request deadlines and cancellation.
 // param client: The Kubernetes client used to interact with the cluster.
 // param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
-// param namespace: The namespace of the workload.
-// param name: The name of the workload.
+// param workload: The Workload struct representing the workload.
 // returns: A function that can be used with wait.PollUntilContextTimeout to check the status of the workload.
-func (r *WorkloadResizer) CheckWorkloadStatus(ctx context.Context, w WorkloadOps, namespace, name string) func(context.Context) (bool, error) {
+func (r *WorkloadResizer) CheckWorkloadStatus(ctx context.Context, w WorkloadOps, workload *Workload) func(context.Context) (bool, error) {
 	return func(ctx context.Context) (bool, error) {
 		// 1. retrieve the current status of the workload
-		status, err := w.GetStatus(ctx, namespace, name)
+		status, err := w.GetStatus(ctx, workload)
 		if err != nil {
 			return false, err
 		}
 
 		// 2. Check for critical errors (OOM, CrashLoop, etc.)
 		// The CheckPodCriticalErrors function is already generic because it accepts the LabelSelector
-		isError, reason := r.CheckPodCriticalErrors(ctx, status.Namespace, status.LabelSelector)
+		isError, reason := r.CheckPodCriticalErrors(ctx, workload)
 		if isError {
 			return false, fmt.Errorf("fail detected: %s", reason)
 		}
 
 		// 3. Check if the rollout has completed
-		if status.UpdatedReplicas == status.Replicas &&
-			status.AvailableReplicas == status.Replicas &&
+		if status.UpdatedReplicas == status.ExpectedReplicas &&
+			status.AvailableReplicas == status.ExpectedReplicas &&
 			status.ObservedGeneration >= status.Generation {
-			log.Printf("[%s] Rollout successfully completed", name)
+			log.Printf("[%s] Rollout successfully completed", workload.Name)
 			return true, nil
 		}
 
-		log.Printf("[%s] Rollout in progress... (%d/%d ready)", name, status.AvailableReplicas, status.Replicas)
+		log.Printf("[%s] Rollout in progress... (%d/%d ready)", workload.Name, status.AvailableReplicas, status.ExpectedReplicas)
 		return false, nil
 	}
 }
@@ -194,11 +267,10 @@ func (r *WorkloadResizer) CheckWorkloadStatus(ctx context.Context, w WorkloadOps
 // param ctx: The context for managing request deadlines and cancellation.
 // param client: The Kubernetes client used to interact with the cluster.
 // param namespace: The namespace of the workload.
-// param labelSelector: The label selector used to identify the Pods associated with the workload.
 // returns: A boolean indicating whether a critical error was detected, and a string with the reason for the error if applicable.
-func (r *WorkloadResizer) CheckPodCriticalErrors(ctx context.Context, namespace string, labelSelector *metav1.LabelSelector) (bool, string) {
-	selector, _ := metav1.LabelSelectorAsSelector(labelSelector)
-	pods, _ := r.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+func (r *WorkloadResizer) CheckPodCriticalErrors(ctx context.Context, workload *Workload) (bool, string) {
+	selector, _ := metav1.LabelSelectorAsSelector(workload.LabelSelector)
+	pods, _ := r.client.CoreV1().Pods(workload.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector.String(),
 	})
 
@@ -236,4 +308,42 @@ func (r *WorkloadResizer) CheckPodCriticalErrors(ctx context.Context, namespace 
 		}
 	}
 	return false, ""
+}
+
+// IsPDBRestrictions checks if there are any Pod Disruption Budget restrictions that would prevent the workload from being safely resized.
+// It returns a boolean indicating whether PDB restrictions are present and an error if the check fails.
+// param ctx: The context for managing request deadlines and cancellation.
+// param namespace: The namespace of the workload.
+// param labelSelector: The label selector used to identify the Pods associated with the workload.
+// returns: A boolean indicating whether PDB restrictions are present and too restrictive, false if they are not, and an error if the check fails.
+func (r *WorkloadResizer) IsPDBTooRestrictive(ctx context.Context, namespace string, labelSelector *metav1.LabelSelector) (bool, error) {
+	if labelSelector == nil || len(labelSelector.MatchLabels) == 0 {
+		return false, nil // No selectors, we assume no PDB
+	}
+
+	pdbs, err := r.client.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, fmt.Errorf("failed to list Pod Disruption Budgets: %v", err)
+	}
+
+	workloadLabels := labels.Set(labelSelector.MatchLabels)
+
+	for _, pdb := range pdbs.Items {
+		pdbSelector, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
+		if err != nil {
+			continue
+		}
+
+		// check if the PDB protects our Pods by matching the labels
+		if pdbSelector.Matches(workloadLabels) {
+			// The correct field is DisruptionsAllowed, not DesiredHealthy.
+			// If DisruptionsAllowed is 0, it means that no disruptions are currently allowed,
+			// which would prevent us from safely resizing the workload.
+			if pdb.Status.DisruptionsAllowed == 0 {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }

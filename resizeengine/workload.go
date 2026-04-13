@@ -12,20 +12,19 @@ import (
 
 // WorkloadStatus is a normalized struct to represent the status of a workload (Deployment or StatefulSet) in a consistent way.
 type WorkloadStatus struct {
-	Replicas           int32
+	ExpectedReplicas   int32
 	UpdatedReplicas    int32
 	AvailableReplicas  int32
 	ObservedGeneration int64
 	Generation         int64
-	Namespace          string
-	LabelSelector      *metav1.LabelSelector
 }
 
 // WorkloadOps defines the interface for operations on workloads (Deployment, StatefulSet, etc.) that the resizer will use to find, resize and check status.
 type WorkloadOps interface {
 	FindWorkload(ctx context.Context, rec *model.Recommendation) (*Workload, error)
 	ResizeWorkload(ctx context.Context, workload *Workload, rec *model.Recommendation) error
-	GetStatus(ctx context.Context, namespace, name string) (*WorkloadStatus, error)
+	GetStatus(ctx context.Context, workload *Workload) (*WorkloadStatus, error)
+	IsWorkloadInPausedState(ctx context.Context, workload *Workload) (bool, error)
 }
 
 type WorkloadType string
@@ -42,8 +41,9 @@ type Workload struct {
 	Name             string
 	ContainerName    string
 	Template         *corev1.PodTemplateSpec
-	labelSelector    *metav1.LabelSelector
-	originalResource any
+	LabelSelector    *metav1.LabelSelector
+	UpdateStrategy   string
+	OriginalResource any
 }
 
 // ResizeContainer modifies the PodTemplateSpec based on the recommendation.

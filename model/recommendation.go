@@ -2,37 +2,37 @@ package model
 
 import "fmt"
 
-type DeploymentType string
+type Kind string
 
 const (
-	ReplicaSet  DeploymentType = "ReplicaSet"
-	StatefulSet DeploymentType = "StatefuSet"
+	ReplicaSet  Kind = "ReplicaSet"
+	StatefulSet Kind = "StatefuSet"
 )
 
 type Recommendation struct {
-	Environment                 string         `json:"Environment"`
-	Namespace                   string         `json:"Namespace"`
-	Type                        DeploymentType `json:"Type"`
-	WorkloadName                string         `json:"WorkloadName"`
-	Container                   string         `json:"Container"`
-	Replicas                    string         `json:"Replicas"`
-	CpuRequest                  string         `json:"CpuRequest"`
-	CpuLimit                    string         `json:"CpuLimit"`
-	CpuRequestRecommendation    string         `json:"CpuRequestRecommendation"`
-	CpuLimitRecommendation      string         `json:"CpuLimitRecommendation"`
-	MemRequest                  string         `json:"MemRequest"`
-	MemLimit                    string         `json:"MemLimit"`
-	MemoryRequestRecommendation string         `json:"MemoryRequestRecommendation"`
-	MemoryLimitRecommendation   string         `json:"MemoryLimitRecommendation"`
+	Environment                 string `json:"Environment"`
+	Namespace                   string `json:"Namespace"`
+	Kind                        Kind   `json:"Kind"`
+	WorkloadName                string `json:"WorkloadName"`
+	Container                   string `json:"Container"`
+	Replicas                    string `json:"Replicas"`
+	CpuRequest                  string `json:"CpuRequest"`
+	CpuLimit                    string `json:"CpuLimit"`
+	CpuRequestRecommendation    string `json:"CpuRequestRecommendation"`
+	CpuLimitRecommendation      string `json:"CpuLimitRecommendation"`
+	MemRequest                  string `json:"MemRequest"`
+	MemLimit                    string `json:"MemLimit"`
+	MemoryRequestRecommendation string `json:"MemoryRequestRecommendation"`
+	MemoryLimitRecommendation   string `json:"MemoryLimitRecommendation"`
 }
 
 func (r *Recommendation) String() string {
 	return fmt.Sprintf(
-		"Environment=%s Namespace=%s WorkloadName=%s Type=%s Container=%s Replicas=%s CpuRequest=%s CpuLimit=%s CpuRequestRecommendation=%s CpuLimitRecommendation=%s MemRequest=%s MemLimit=%s MemoryRequestRecommendation=%s MemoryLimitRecommendation=%s",
+		"Environment=%s Namespace=%s WorkloadName=%s Kind=%s Container=%s Replicas=%s CpuRequest=%s CpuLimit=%s CpuRequestRecommendation=%s CpuLimitRecommendation=%s MemRequest=%s MemLimit=%s MemoryRequestRecommendation=%s MemoryLimitRecommendation=%s",
 		r.Environment,
 		r.Namespace,
 		r.WorkloadName,
-		r.Type,
+		r.Kind,
 		r.Container,
 		r.Replicas,
 		r.CpuRequest,
