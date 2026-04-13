@@ -8,7 +8,7 @@ func TestRecommendation_DeepCopy(t *testing.T) {
 	original := &Recommendation{
 		Environment:                 "production",
 		Namespace:                   "billing",
-		Type:                        "Deployment", // Assumendo sia una stringa o tipo derivato
+		Kind:                        "Deployment", // Assumendo sia una stringa o tipo derivato
 		WorkloadName:                "api-server",
 		Container:                   "app-container",
 		CpuRequestRecommendation:    "500m",

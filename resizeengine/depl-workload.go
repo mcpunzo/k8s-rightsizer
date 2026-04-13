@@ -33,8 +33,9 @@ func (w *DeploymentWorkload) FindWorkload(ctx context.Context, rec *model.Recomm
 		Name:             rec.WorkloadName,
 		ContainerName:    rec.Container,
 		Template:         &deployment.Spec.Template,
-		labelSelector:    deployment.Spec.Selector,
-		originalResource: deployment}
+		LabelSelector:    deployment.Spec.Selector,
+		UpdateStrategy:   string(deployment.Spec.Strategy.Type),
+		OriginalResource: deployment}
 
 	return workload, nil
 
@@ -57,7 +58,7 @@ func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workl
 		return fmt.Errorf("container %s not found in deployment %s or resources already match recommendation", rec.Container, workload.Name)
 	}
 
-	deployment, ok := workload.originalResource.(*appsv1.Deployment)
+	deployment, ok := workload.OriginalResource.(*appsv1.Deployment)
 	if !ok {
 		return fmt.Errorf("failed to cast original resource to Deployment for %s", workload.Name)
 	}
@@ -80,11 +81,10 @@ func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workl
 // GetStatus retrieves the current status of the Deployment and normalizes it into a WorkloadStatus struct.
 // It returns an error if the Deployment cannot be retrieved.
 // param ctx: The context for managing request deadlines and cancellation.
-// param ns: The namespace of the Deployment.
-// param name: The name of the Deployment.
+// param workload: The Workload struct representing the Deployment.
 // returns: A pointer to a WorkloadStatus struct representing the current status of the Deployment, or an error if the Deployment cannot be retrieved.
-func (w *DeploymentWorkload) GetStatus(ctx context.Context, ns, name string) (*WorkloadStatus, error) {
-	d, err := w.client.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+func (w *DeploymentWorkload) GetStatus(ctx context.Context, workload *Workload) (*WorkloadStatus, error) {
+	d, err := w.client.AppsV1().Deployments(workload.Namespace).Get(ctx, workload.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -94,9 +94,21 @@ func (w *DeploymentWorkload) GetStatus(ctx context.Context, ns, name string) (*W
 	}
 
 	return &WorkloadStatus{
-		Replicas: expectedReplicas, UpdatedReplicas: d.Status.UpdatedReplicas,
+		ExpectedReplicas: expectedReplicas, UpdatedReplicas: d.Status.UpdatedReplicas,
 		AvailableReplicas: d.Status.AvailableReplicas, Generation: d.Generation,
-		ObservedGeneration: d.Status.ObservedGeneration, Namespace: d.Namespace,
-		LabelSelector: d.Spec.Selector,
+		ObservedGeneration: d.Status.ObservedGeneration,
 	}, nil
+}
+
+// IsWorkloadInPausedState checks if the Deployment is currently in a paused state.
+// It returns a boolean indicating whether the Deployment is paused, and an error if the Deployment cannot be retrieved.
+// param ctx: The context for managing request deadlines and cancellation.
+// param workload: The Workload struct representing the Deployment.
+// returns: A boolean indicating whether the Deployment is paused, and an error if the Deployment cannot be retrieved.
+func (w *DeploymentWorkload) IsWorkloadInPausedState(ctx context.Context, workload *Workload) (bool, error) {
+	d, err := w.client.AppsV1().Deployments(workload.Namespace).Get(ctx, workload.Name, metav1.GetOptions{})
+	if err != nil {
+		return false, err
+	}
+	return d.Spec.Paused, nil
 }

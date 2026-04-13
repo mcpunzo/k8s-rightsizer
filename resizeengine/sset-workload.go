@@ -33,8 +33,9 @@ func (w *StatefulSetWorkload) FindWorkload(ctx context.Context, rec *model.Recom
 		Name:             rec.WorkloadName,
 		ContainerName:    rec.Container,
 		Template:         &statefulSet.Spec.Template,
-		labelSelector:    statefulSet.Spec.Selector,
-		originalResource: statefulSet}, nil
+		LabelSelector:    statefulSet.Spec.Selector,
+		UpdateStrategy:   string(statefulSet.Spec.UpdateStrategy.Type),
+		OriginalResource: statefulSet}, nil
 }
 
 // ResizeWorkload modifies the StatefulSet's PodTemplateSpec based on the recommendation and updates the StatefulSet in the cluster.
@@ -54,7 +55,7 @@ func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Work
 		return fmt.Errorf("container %s not found in statefulset %s or resources already match recommendation", rec.Container, workload.Name)
 	}
 
-	statefulSet, ok := workload.originalResource.(*appsv1.StatefulSet)
+	statefulSet, ok := workload.OriginalResource.(*appsv1.StatefulSet)
 	if !ok {
 		return fmt.Errorf("failed to cast original resource to StatefulSet for %s", workload.Name)
 	}
@@ -77,11 +78,10 @@ func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Work
 // GetStatus retrieves the current status of the StatefulSet and normalizes it into a WorkloadStatus struct.
 // It returns an error if the StatefulSet cannot be retrieved.
 // param ctx: The context for managing request deadlines and cancellation.
-// param ns: The namespace of the StatefulSet.
-// param name: The name of the StatefulSet.
+// param workload: The Workload struct representing the StatefulSet.
 // returns: A pointer to a WorkloadStatus struct representing the current status of the StatefulSet, or an error if the StatefulSet cannot be retrieved.
-func (w *StatefulSetWorkload) GetStatus(ctx context.Context, ns, name string) (*WorkloadStatus, error) {
-	s, err := w.client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
+func (w *StatefulSetWorkload) GetStatus(ctx context.Context, workload *Workload) (*WorkloadStatus, error) {
+	s, err := w.client.AppsV1().StatefulSets(workload.Namespace).Get(ctx, workload.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -92,9 +92,28 @@ func (w *StatefulSetWorkload) GetStatus(ctx context.Context, ns, name string) (*
 	}
 
 	return &WorkloadStatus{
-		Replicas: expectedReplicas, UpdatedReplicas: s.Status.UpdatedReplicas,
+		ExpectedReplicas: expectedReplicas, UpdatedReplicas: s.Status.UpdatedReplicas,
 		AvailableReplicas: s.Status.AvailableReplicas, Generation: s.Generation,
-		ObservedGeneration: s.Status.ObservedGeneration, Namespace: s.Namespace,
-		LabelSelector: s.Spec.Selector,
+		ObservedGeneration: s.Status.ObservedGeneration,
 	}, nil
+}
+
+// IsWorkloadInPausedState checks if the StatefulSet is currently in a paused state by examining its update strategy and partition settings.
+// It returns a boolean indicating whether the StatefulSet is paused, and an error if the StatefulSet cannot be retrieved.
+// param ctx: The context for managing request deadlines and cancellation.
+// param workload: The Workload struct representing the StatefulSet.
+// returns: A boolean indicating whether the StatefulSet is paused, and an error if the StatefulSet cannot be retrieved.
+func (w *StatefulSetWorkload) IsWorkloadInPausedState(ctx context.Context, workload *Workload) (bool, error) {
+	sts, err := w.client.AppsV1().StatefulSets(workload.Namespace).Get(ctx, workload.Name, metav1.GetOptions{})
+	if err != nil {
+		return false, err
+	}
+
+	if sts.Spec.UpdateStrategy.RollingUpdate != nil &&
+		sts.Spec.UpdateStrategy.RollingUpdate.Partition != nil {
+		// if the partition is >= the replicas, no pods will be updated, so we can consider the workload as paused
+		return *sts.Spec.UpdateStrategy.RollingUpdate.Partition >= *sts.Spec.Replicas, nil
+	}
+
+	return false, nil
 }

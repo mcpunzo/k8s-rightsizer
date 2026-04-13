@@ -13,6 +13,7 @@ import (
 )
 
 func TestDeploymentWorkload_FindWorkload(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		rec          *model.Recommendation
@@ -42,7 +43,6 @@ func TestDeploymentWorkload_FindWorkload(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Inizializziamo il fake client con gli oggetti caricati in memoria
 			fakeClient := fake.NewSimpleClientset(tt.initialObjs...)
 
 			w := &DeploymentWorkload{client: fakeClient}
@@ -116,7 +116,7 @@ func TestDeploymentWorkload_ResizeWorkload(t *testing.T) {
 				Namespace:        tt.initialDep.Namespace,
 				Name:             tt.initialDep.Name,
 				Template:         &tt.initialDep.Spec.Template,
-				originalResource: tt.initialDep,
+				OriginalResource: tt.initialDep,
 			}
 
 			w := &DeploymentWorkload{client: fakeClient}
@@ -130,6 +130,7 @@ func TestDeploymentWorkload_ResizeWorkload(t *testing.T) {
 }
 
 func TestDeploymentWorkload_GetStatus(t *testing.T) {
+	t.Parallel()
 	replicas := int32(2)
 
 	tests := []struct {
@@ -165,7 +166,12 @@ func TestDeploymentWorkload_GetStatus(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(tt.mockDeploy)
 
 			w := &DeploymentWorkload{client: fakeClient}
-			status, err := w.GetStatus(context.Background(), "default", "api")
+			workload := &Workload{
+				WorkloadType: Deployment,
+				Namespace:    "default",
+				Name:         "api",
+			}
+			status, err := w.GetStatus(context.Background(), workload)
 
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -173,8 +179,8 @@ func TestDeploymentWorkload_GetStatus(t *testing.T) {
 			if status.AvailableReplicas != tt.expectedReady {
 				t.Errorf("AvailableReplicas: got %d, want %d", status.AvailableReplicas, tt.expectedReady)
 			}
-			if status.Replicas != tt.expectedDesired {
-				t.Errorf("Replicas: got %d, want %d", status.Replicas, tt.expectedDesired)
+			if status.ExpectedReplicas != tt.expectedDesired {
+				t.Errorf("Replicas: got %d, want %d", status.ExpectedReplicas, tt.expectedDesired)
 			}
 		})
 	}

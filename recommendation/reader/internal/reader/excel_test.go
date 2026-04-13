@@ -12,7 +12,7 @@ func createTmpFile(tmpFile string, data []string) (func(), error) {
 	f := excelize.NewFile()
 	sheet := "Sheet1"
 	header := []string{
-		"Environment", "Namespace", "Workload Name", "Type", "POD", "Container", "Replicas",
+		"Environment", "Namespace", "Workload Name", "Kind", "POD", "Container", "Replicas",
 		"CPU Req", "CPU Lim", "CPU Req Rec", "CPU Lim Rec",
 		"MEM Req", "MEM Lim", "MEM Req Rec", "MEM Lim Rec",
 	}
@@ -43,8 +43,8 @@ func AssertEqual(t *testing.T, expected []string, actual *model.Recommendation) 
 	if actual.Namespace != expected[1] {
 		t.Errorf("Namespace expected %s, got %s", expected[1], actual.Namespace)
 	}
-	if actual.Type != model.DeploymentType(expected[2]) {
-		t.Errorf("Type expected %s, got %s", expected[2], actual.Type)
+	if actual.Kind != model.Kind(expected[2]) {
+		t.Errorf("Kind expected %s, got %s", expected[2], actual.Kind)
 	}
 	if actual.WorkloadName != expected[3] {
 		t.Errorf("WorkloadName expected %s, got %s", expected[3], actual.WorkloadName)

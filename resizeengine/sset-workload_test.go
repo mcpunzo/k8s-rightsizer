@@ -13,6 +13,7 @@ import (
 )
 
 func TestStatefulSetWorkload_FindWorkload(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		rec          *model.Recommendation
@@ -65,6 +66,7 @@ func TestStatefulSetWorkload_FindWorkload(t *testing.T) {
 }
 
 func TestStatefulSetWorkload_ResizeWorkload(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		initialSts *appsv1.StatefulSet
@@ -123,7 +125,7 @@ func TestStatefulSetWorkload_ResizeWorkload(t *testing.T) {
 				Namespace:        tt.initialSts.Namespace,
 				Name:             tt.initialSts.Name,
 				Template:         &tt.initialSts.Spec.Template,
-				originalResource: tt.initialSts,
+				OriginalResource: tt.initialSts,
 			}
 
 			w := &StatefulSetWorkload{client: fakeClient}
@@ -137,6 +139,7 @@ func TestStatefulSetWorkload_ResizeWorkload(t *testing.T) {
 }
 
 func TestStatefulSetWorkload_GetStatus(t *testing.T) {
+	t.Parallel()
 	replicas := int32(3)
 
 	tests := []struct {
@@ -172,16 +175,20 @@ func TestStatefulSetWorkload_GetStatus(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(tt.mockSts)
 
 			w := &StatefulSetWorkload{client: fakeClient}
-			status, err := w.GetStatus(context.Background(), "default", "sts")
-
+			workload := &Workload{
+				WorkloadType: StatefulSet,
+				Namespace:    "default",
+				Name:         "sts",
+			}
+			status, err := w.GetStatus(context.Background(), workload)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			if status.AvailableReplicas != tt.expectedReady {
 				t.Errorf("AvailableReplicas mismatch: got %d, want %d", status.AvailableReplicas, tt.expectedReady)
 			}
-			if status.Replicas != tt.expectedDesired {
-				t.Errorf("Replicas mismatch: got %d, want %d", status.Replicas, tt.expectedDesired)
+			if status.ExpectedReplicas != tt.expectedDesired {
+				t.Errorf("Replicas mismatch: got %d, want %d", status.ExpectedReplicas, tt.expectedDesired)
 			}
 		})
 	}
