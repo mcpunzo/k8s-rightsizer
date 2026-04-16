@@ -69,6 +69,7 @@ func TestWorkloadResizer_ResizeWorkload(t *testing.T) {
 		wantErr     bool
 		errContains string
 	}{
+
 		{
 			name: "Success - Full Flow",
 			rec: &model.Recommendation{
@@ -101,23 +102,25 @@ func TestWorkloadResizer_ResizeWorkload(t *testing.T) {
 			name: "Rollback - Polling Failure (Crash Detected)",
 			rec:  &model.Recommendation{WorkloadName: "fail", Container: "app"},
 			ops: func() *mockWorkloadOps {
-				callCounter := 0
+				callCount := 0
 				return &mockWorkloadOps{
 					findFunc: func() (*Workload, error) {
 						return &Workload{Name: "fail", Namespace: "default", Template: baseTemplate.DeepCopy(), UpdateStrategy: "RollingUpdate"}, nil
 					},
 					resizeFunc: func() error { return nil },
 					statusFunc: func() (*WorkloadStatus, error) {
-						callCounter++
-						if callCounter == 1 { // First call simulates the status before resize i.e. in the precheck phase
+						callCount++
+						if callCount == 1 { // Simulate first successful status check i.e. for the precheck phase
+							// First call returns normal status
 							return &WorkloadStatus{
-								ExpectedReplicas:  3,
-								UpdatedReplicas:   3,
-								AvailableReplicas: 3,
+								ExpectedReplicas:   1,
+								UpdatedReplicas:    1,
+								AvailableReplicas:  1,
+								Generation:         1,
+								ObservedGeneration: 1,
 							}, nil
 						}
-
-						// the Second call checks the status after resize and simulates a crash detected that should trigger the rollback
+						// Second call simulates a crash detected during polling, which should trigger rollback
 						return nil, errors.New("crash detected")
 					},
 					isPausedFunc: func() (bool, error) {
@@ -179,7 +182,6 @@ func TestWorkloadResizer_ResizeWorkload_With_PDB(t *testing.T) {
 		wantErr       bool
 		errContains   string
 	}{
-
 		{
 			name: "Success - Full Flow with PDB allowing disruption",
 			rec: &model.Recommendation{
