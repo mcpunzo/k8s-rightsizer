@@ -22,13 +22,14 @@ The tool reads a list of recommendations from an Excel file, applies them, and m
 
 
 
-## 💻 Local Environment (Minikube + Podman)
+## 💻 Local Environment (Minikube)
 
 To test the Rightsizer engine locally, you need to sync your container image and recommendation data with a Minikube node. We provide an automated script to spin up a pre-configured environment.
 
 ### 1. Setup the local environment
 
 The setup script initializes a single-node Minikube cluster using the Podman driver, enables necessary addons (YAKD Dashboard, Metrics Server), and mounts your local data folder.
+This script will automatically detect the driver to set up the cluster (docker, podman) but you can override this selection by setting the variable DRIVER.
 
 ```bash
 # Navigate to the test directory
@@ -37,6 +38,10 @@ cd ./test-env/local
 # Run the setup script by passing the local folder containing your recommendation data
 # Usage: ./setup-rightsizer-env.sh <absolute_or_relative_path>
 ./setup-rightsizer-env.sh ~/my-project-data
+
+# Force using podman driver
+# DRIVER=podman ./setup-rightsizer-env.sh ~/my-project-data
+
 ```
 **Note**: The script mounts your local folder to /mnt/data inside the Minikube node. Ensure your Kubernetes PersistentVolume manifests point to this path.
 

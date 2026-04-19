@@ -7,7 +7,19 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
+# Automatic driver detection
+# Priority to Docker (more stable for mounts), fallback to Podman
+if command -v docker >/dev/null 2>&1; then
+    DETECTED_DRIVER="docker"
+elif command -v podman >/dev/null 2>&1; then
+    DETECTED_DRIVER="podman"
+else
+    echo "❌ Errore: Né Docker né Podman sono installati."
+    exit 1
+fi
+
 # Variable definitions
+DRIVER=${DRIVER:-$DETECTED_DRIVER}
 PROFILE_NAME="k8s-rightsizer-lab"
 K8S_VERSION=v1.34
 CPUS=2
@@ -15,11 +27,21 @@ MEMORY="4096mb"
 HOST_PATH="$1" # Local folder for volumes
 GUEST_PATH="/mnt/data"
 
+
+# Check if the profile already exists with a different driver
+CURRENT_DRIVER=$(minikube profile list -o json | jq -r ".valid[] | select(.Name==\"$PROFILE_NAME\") | .Config.Driver" 2>/dev/null)
+
+if [ ! -z "$CURRENT_DRIVER" ] && [ "$CURRENT_DRIVER" != "$DRIVER" ]; then
+    echo "⚠️ Error: The profile already exists with driver $CURRENT_DRIVER, but you are trying to use $DRIVER."
+    echo "Run 'minikube delete -p $PROFILE_NAME' to change the driver."
+    exit 1
+fi
+
 echo "🚀 Starting Rightsizer environment (K8s $K8S_VERSION) with YAKD Addon"
 
 minikube start \
     --profile "$PROFILE_NAME" \
-    --driver=podman \
+    --driver=$DRIVER \
     --cpus=$CPUS \
     --memory=$MEMORY \
     --kubernetes-version=$K8S_VERSION \
