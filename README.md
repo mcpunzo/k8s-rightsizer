@@ -15,7 +15,7 @@ The tool reads a list of recommendations from an Excel file, applies them, and m
 
 ## 🛠 Prerequisites
 
-* **Kubernetes Cluster** (v1.33+)
+* **Kubernetes Cluster** (v1.34+)
 * **Helm** (v4.1+)
 * **Go** (v1.25+) - *Only for local development*
 * **Podman or Docker**
@@ -24,9 +24,23 @@ The tool reads a list of recommendations from an Excel file, applies them, and m
 
 ## 💻 Local Environment (Minikube + Podman)
 
-Testing locally requires syncing your container image and data files with the Minikube node.
+To test the Rightsizer engine locally, you need to sync your container image and recommendation data with a Minikube node. We provide an automated script to spin up a pre-configured environment.
 
-### 1. Build and Load the Image
+### 1. Setup the local environment
+
+The setup script initializes a single-node Minikube cluster using the Podman driver, enables necessary addons (YAKD Dashboard, Metrics Server), and mounts your local data folder.
+
+```bash
+# Navigate to the test directory
+cd ./test-env/local
+
+# Run the setup script by passing the local folder containing your recommendation data
+# Usage: ./setup-rightsizer-env.sh <absolute_or_relative_path>
+./setup-rightsizer-env.sh ~/my-project-data
+```
+**Note**: The script mounts your local folder to /mnt/data inside the Minikube node. Ensure your Kubernetes PersistentVolume manifests point to this path.
+
+### 2. Build and Load the Image
 Minikube needs the image in its internal registry. When using Podman, the most reliable way is via a tarball:
 
 ```bash
@@ -38,25 +52,26 @@ podman build -t localhost/k8s-rightsizer:local .
 
 # 3. Export and Load into Minikube
 podman save localhost/k8s-rightsizer:local -o rightsizer.tar
-minikube image load rightsizer.tar
+minikube image load rightsizer.tar --profile k8s-rightsizer-lab
 rm rightsizer.tar
-```
-
-### 2. Data Mounting
-The tool reads from a recommendation file (.xslx, .xsl). Use minikube mount to make your local files accessible:
-
-```bash
-# Keep this terminal open to maintain the mount:
-minikube mount /path/to/your/recommendation-file-folder:/mnt/data
 ```
 
 ### 2. Deploy via Helm
 
 ```bash
-helm upgrade --install rightsizer-local ./k8s-rightsizer-helm \
+helm upgrade --install k8d-rightsizer ./k8s-rightsizer-helm \
+  --namespace k8s-rightsizer \
+  --create-namespace \
   -f ./k8s-rightsizer-helm/values.yaml \
   -f ./k8s-rightsizer-helm/local/values.yaml
 ```
+
+### 3. Cleanup
+
+```bash
+helm uninstall k8s-rightsizer -n k8s-rightsizer
+```
+
 
 ## ☁️ Remote Environment
 
@@ -71,7 +86,8 @@ podman push [your-registry.com/k8s-rightsizer:v1.0.0](https://your-registry.com/
 
 ```bash
 helm upgrade --install k8s-rightsizer ./k8s-rightsizer-helm \
-  -n k8s-rightsizer-tool \
+  -n k8s-rightsizer \
+  --create-namespace \
   --set image.repository=[your-registry.com/k8s-rightsizer](https://your-registry.com/k8s-rightsizer) \
   --set image.tag=v1.0.0 \
   --set image.pullPolicy=Always
@@ -86,17 +102,35 @@ The **K8s Rightsizer** is built with a "Safety-First" approach. Instead of simpl
 
 The tool follows a strict state machine for each entry in the Excel file:
 
-### 1. Snapshot Phase (Pre-Check)
+### 1. Pre-checks
+Before applying any recommendation, the engine performs a series of safety checks to ensure that resizing won't cause service disruptions or violate cluster policies.
+
+A resize operation is automatically skipped if any of the following conditions are met:
+
+* **Paused State**: The workload (Deployment/StatefulSet) is currently paused by the user.
+* **PDB Restrictions**: A PodDisruptionBudget is active and too restrictive (e.g., maxUnavailable: 0 or current available replicas at the limit), making any pod restart unsafe.
+
+* **Unsupported Update Strategies**: Only RollingUpdate is currently supported to ensure zero-downtime transitions.
+  - OnDelete: Skipped because the update wouldn't trigger automatically.
+  - Recreate: Skipped to avoid the full downtime typical of this strategy.
+
+* **Degraded Health**: The workload is not healthy. We don't resize unstable systems.
+* **Ongoing Rollout**: A deployment is already in progress. We wait for the system to reach a stable state.
+
+* **Critical Pod Errors**: Critical issues are detected in the existing pods (e.g., CrashLoopBackOff, ImagePullBackOff). The resizer won't interfere with workloads that are already failing.
+
+
+### 2. Snapshot Phase (Pre-Check)
 Before any modification, the tool fetches the current resource configuration of the target (Deployment or StatefulSet).
 * **Action**: Saves `cpu` and `memory` limits/requests into an in-memory backup.
 * **Metadata**: Records the current `generation` of the resource.
 
-### 2. Application Phase
+### 3. Application Phase
 The tool applies the new values using a **Strategic Merge Patch**.
 * **Trigger**: Updates the container spec with values from the Excel file.
 * **Wait**: Triggers a new Rollout in Kubernetes.
 
-### 3. Monitoring Phase (The "Watch" Loop)
+### 4. Monitoring Phase (The "Watch" Loop)
 This is the core of the rollback logic. The tool monitors the new Pods for a configurable `timeout` (default: **3 minutes**).
 
 The system identifies a failure if any of the following conditions are met:
@@ -107,7 +141,7 @@ The system identifies a failure if any of the following conditions are met:
 * **Timeout**: The Pods do not reach the `Ready` state within the time limit.
 
 
-### 4. Rollback Phase (Recovery)
+### 5. Rollback Phase (Recovery)
 If a failure is detected, the tool immediately aborts the monitoring and initiates recovery.
 * **Action**: Re-applies the **Snapshot** taken in Phase 1.
 * **Verification**: Ensures the resource returns to its original `Ready` state.
@@ -118,12 +152,14 @@ If a failure is detected, the tool immediately aborts the monitoring and initiat
 ## 📊 Logic Flowchart
 
 1. **START** ➔ Read row from Excel.
-2. **BACKUP** ➔ Get current `resources`.
-3. **PATCH** ➔ Apply new `resources`.
-4. **MONITOR** ➔ Watch Pod status.
+2. **RETRIEVE** ➔ Retrieve current `resourcee`.
+3. **PRECHECK** ➔ Check current `resources` conditions 
+4. **BACKUP** ➔ Create current `resources` backup.
+5. **PATCH** ➔ Apply new `resources`.
+6. **MONITOR** ➔ Watch Pod status.
    * ✅ **IF READY** within 3m ➔ **COMMIT** (Next row).
    * ❌ **IF ERROR** (OOM/Crash/Timeout) ➔ **ROLLBACK**.
-5. **RESTORE** ➔ Re-apply backup ➔ **LOG ERROR**.
+7. **RESTORE** ➔ Re-apply backup ➔ **LOG ERROR**.
 
 
 
@@ -147,7 +183,7 @@ Recommendation file (.xslx, .xsl) must contain the following columns (order is i
 | :--- | :--- | :--- |
 | **Environment** | The stage environment. | `production` |
 | **Namespace** | The K8s namespace where the resource resides. | `prod-app` |
-| **Type** | The type of resource (`Deployment` or `StatefulSet`). | `Deployment` |
+| **Kind** | The type of resource (`Deployment` or `StatefulSet`). | `Deployment` |
 | **Workload Name** | The name of the resource. | `api-gateway` |
 | **Container** | The name of the container in this workload. | `api-gateway` |
 | **Replicas** | The number of replicas. | `2` |
