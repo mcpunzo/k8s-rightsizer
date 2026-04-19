@@ -30,16 +30,19 @@ docker-push: ## Push the Docker image to the registry
 	@echo "Pushing Docker image..."
 	docker push $(IMG)
 
-.PHONY: helm-deploy
-helm-deploy: ## Deploy with Helm
-	@echo "Deploying with Helm..."
+.PHONY: helm-dev-deploy
+helm-dev-deploy: ## Deploy with Helm (development)
+	@echo "Deploying with Helm (development)..."
 	helm upgrade --install $(APP_NAME) ./k8s-rightsizer-helm \
+		--create-namespace \
+		-f ./k8s-rightsizer-helm/values.yaml \
+  		-f ./k8s-rightsizer-helm/dev/values.yaml \
 		--set image.repository=$(DOCKER_USER)/$(APP_NAME) \
 		--set image.tag=$(VERSION)
 
 
 .PHONY: all
-all: docker-build docker-push helm-deploy ## Perform all steps: build, push, and deploy
+all: docker-build docker-push helm-dev-deploy ## Perform all steps: build, push, and deploy
 	
 
 .DEFAULT_GOAL := help

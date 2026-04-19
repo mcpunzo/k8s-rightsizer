@@ -88,6 +88,8 @@ podman push [your-registry.com/k8s-rightsizer:v1.0.0](https://your-registry.com/
 helm upgrade --install k8s-rightsizer ./k8s-rightsizer-helm \
   -n k8s-rightsizer \
   --create-namespace \
+  -f ./k8s-rightsizer-helm/values.yaml \
+  -f ./k8s-rightsizer-helm/<env>/values.yaml \
   --set image.repository=[your-registry.com/k8s-rightsizer](https://your-registry.com/k8s-rightsizer) \
   --set image.tag=v1.0.0 \
   --set image.pullPolicy=Always
