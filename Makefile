@@ -1,8 +1,13 @@
-# Variabili
+# Makefile for k8s-rightsizer project
+
+# Check for container engine (podman or docker)
+CONTAINER_ENGINE ?= $(shell which docker >/dev/null 2>&1 && echo docker || echo podman)
+
+# Variables
 APP_NAME := k8s-rightsizer
-DOCKER_USER := mcpunzo
+REGISTRY_USER := mcpunzo
 VERSION := v0.0.1
-IMG := $(DOCKER_USER)/$(APP_NAME):$(VERSION)
+IMG := $(REGISTRY_USER)/$(APP_NAME):$(VERSION)
 
 .PHONY: clean
 clean: ## Clean build artifacts
@@ -20,15 +25,30 @@ build-bin: ## Build the binary
 	@echo "Compiling..."
 	CGO_ENABLED=0 GOOS=linux go build -o bin/$(APP_NAME) cmd/main.go
 
-.PHONY: docker-build
-docker-build: ## Build the Docker image
-	@echo "Docker Image creation..."
-	docker build -t $(IMG) .
+.PHONY: image-build
+image-build: ## Build the image
+	@echo "Building image..."
+	$(CONTAINER_ENGINE) b\uild -t $(IMG) .
 
-.PHONY: docker-push
-docker-push: ## Push the Docker image to the registry
-	@echo "Pushing Docker image..."
-	docker push $(IMG)
+.PHONY: image-push
+image-push: ## Push the image to the registry
+	@echo "Pushing image..."
+	$(CONTAINER_ENGINE) push $(IMG)
+
+.PHONY: helm-local-deploy
+helm-local-deploy: ## Deploy with Helm (local)
+	@echo "Exporting image for local deployment..."
+	$(CONTAINER_ENGINE) save $(IMG) -o rightsizer.tar
+	@echo "Loading image into Minikube..."
+	minikube image load rightsizer.tar --profile k8s-rightsizer-lab
+	@echo "Cleaning up..."
+	rm rightsizer.tar
+	@echo "Deploying with Helm (local)..."
+	helm upgrade --install $(APP_NAME) ./k8s-rightsizer-helm \
+		--create-namespace \
+		-f ./k8s-rightsizer-helm/values.yaml \
+  		-f ./k8s-rightsizer-helm/local/values.yaml \
+		
 
 .PHONY: helm-dev-deploy
 helm-dev-deploy: ## Deploy with Helm (development)
@@ -42,7 +62,7 @@ helm-dev-deploy: ## Deploy with Helm (development)
 
 
 .PHONY: all
-all: docker-build docker-push helm-dev-deploy ## Perform all steps: build, push, and deploy
+all: image-build image-push helm-dev-deploy ## Perform all steps: build, push, and deploy
 	
 
 .DEFAULT_GOAL := help

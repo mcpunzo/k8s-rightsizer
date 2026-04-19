@@ -40,30 +40,16 @@ cd ./test-env/local
 ```
 **Note**: The script mounts your local folder to /mnt/data inside the Minikube node. Ensure your Kubernetes PersistentVolume manifests point to this path.
 
+
 ### 2. Build and Load the Image
 Minikube needs the image in its internal registry. When using Podman, the most reliable way is via a tarball:
 
 ```bash
-# 1. Build the binary for Linux AMD64 (Standard for Minikube)
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/k8s-rightsizer cmd/main.go
+# 1. Build the image with a local tag
+make image-build REGISTRY_USER=localhost VERSION=local
 
-# 2. Build the image with a local tag
-podman build -t localhost/k8s-rightsizer:local .
-
-# 3. Export and Load into Minikube
-podman save localhost/k8s-rightsizer:local -o rightsizer.tar
-minikube image load rightsizer.tar --profile k8s-rightsizer-lab
-rm rightsizer.tar
-```
-
-### 2. Deploy via Helm
-
-```bash
-helm upgrade --install k8d-rightsizer ./k8s-rightsizer-helm \
-  --namespace k8s-rightsizer \
-  --create-namespace \
-  -f ./k8s-rightsizer-helm/values.yaml \
-  -f ./k8s-rightsizer-helm/local/values.yaml
+# 2. Load image into Minikube and deploy via helm
+make helm-local-deploy
 ```
 
 ### 3. Cleanup
