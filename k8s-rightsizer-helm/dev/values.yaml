@@ -5,11 +5,7 @@ image:
 
 storage:
   create: true # If the cluster has dynamic provisioning, you might set this to false and create only the PVC
-  size: 5Gi
+  size: 1Gi
   accessMode: ReadWriteMany
-  storageClass: "standard" # Or "longhorn", "azurefile", etc.
+  storageClass: "standard" # Or "longhorn", "azurefile", "efs-sc".
   hostPath: "" # Not used in remote environments
-
-# Recommendations configuration
-recommendations:
-  pvcName: "recommendations-data-pvc" # The PVC where you upload the files

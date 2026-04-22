@@ -18,6 +18,7 @@ The tool reads a list of recommendations from an Excel file, applies them, and m
 * **Kubernetes Cluster** (v1.34+)
 * **Helm** (v4.1+)
 * **Go** (v1.25+) - *Only for local development*
+* **Make** (v1.25+)
 * **Podman or Docker**
 
 
@@ -54,37 +55,43 @@ Minikube needs the image in its internal registry. When using Podman, the most r
 make image-build REGISTRY_USER=localhost VERSION=local
 
 # 2. Load image into Minikube and deploy via helm
-make helm-local-deploy
+make deploy
 ```
 
 ### 3. Cleanup
 
 ```bash
-helm uninstall k8s-rightsizer -n k8s-rightsizer
+make undeploy
 ```
 
 
 ## ☁️ Remote Environment
 
-### 1. Push to registry
+### 1. Build and push to registry
 
 ```bash
-podman tag localhost/k8s-rightsizer:local [your-registry.com/k8s-rightsizer:v1.0.0](https://your-registry.com/k8s-rightsizer:v1.0.0)
-podman push [your-registry.com/k8s-rightsizer:v1.0.0](https://your-registry.com/k8s-rightsizer:v1.0.0)
+#1. set env variables
+export REGISTRY_USER=<registry_user>
+export VERSION=<image_ver>
+
+#2. build and push the image to your image registry
+make image-build  
+make image-push
 ```
 
 ### 2. Deploy
 
 ```bash
-helm upgrade --install k8s-rightsizer ./k8s-rightsizer-helm \
-  -n k8s-rightsizer \
-  --create-namespace \
-  -f ./k8s-rightsizer-helm/values.yaml \
-  -f ./k8s-rightsizer-helm/<env>/values.yaml \
-  --set image.repository=[your-registry.com/k8s-rightsizer](https://your-registry.com/k8s-rightsizer) \
-  --set image.tag=v1.0.0 \
-  --set image.pullPolicy=Always
+# 3. Deploy
+make deploy ENV=dev
 ```
+
+### 3. Cleanup
+
+```bash
+make undeploy
+```
+
 
 # 🛡️ Rollback Logic Specification
 
@@ -170,7 +177,7 @@ If a failure is detected, the tool immediately aborts the monitoring and initiat
 
 ## 📊 Excel File Structure
 
-Recommendation file (.xslx, .xsl) must contain the following columns (order is important)
+Recommendation file (.xslx, .xsl) must contain the following columns (order is important).
 
 | Column Name | Description | Example Value |
 | :--- | :--- | :--- |
@@ -188,3 +195,7 @@ Recommendation file (.xslx, .xsl) must contain the following columns (order is i
 | **Mem Limit** | The current Memory limit value. | `512Mi` |
 | **Mem Request Recommendation** | The new Memory request value recommended. | `256Mi` |
 | **Mem Limit Recommendation** | The new Memory limit value recommended. | `512Mi` |
+
+**Note** Empty values for recommended columns are not allowed. Therefore set 
+  - **CPU Limit Recommended** to 0m and 
+  - **Memory Limit Recommended** to 0Mi

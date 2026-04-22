@@ -1,0 +1,79 @@
+# --- 1. STANDARD DEPLOYMENT (Success Case) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-standard-rolling
+  namespace: k8s-rightsizer-test
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: standard-app
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: standard-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:stable-alpine
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+---
+# --- 2. DEPLOYMENT WITH RESTRICTIVE PDB (Safety Block Case) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-pdb-blocked
+  namespace: k8s-rightsizer-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pdb-app
+  template:
+    metadata:
+      labels:
+        app: pdb-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:stable-alpine
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: restrictive-pdb
+  namespace: k8s-rightsizer-test
+spec:
+  minAvailable: 2 # With 2 replicas, it doesn't allow any to go down
+  selector:
+    matchLabels:
+      app: pdb-app
+---
+# --- 3. STATEFULSET WITH ON-DELETE (Safety Block Case) ---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: test-statefulset-ondelete
+  namespace: k8s-rightsizer-test
+spec:
+  serviceName: "nginx"
+  replicas: 1
+  updateStrategy:
+    type: OnDelete # This will trigger your check in the switch case
+  selector:
+    matchLabels:
+      app: stateful-app
+  template:
+    metadata:
+      labels:
+        app: stateful-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:stable-alpine

@@ -86,7 +86,7 @@ func TestReadFromExcel(t *testing.T) {
 	tmpFile := "test_recommendations.xlsx"
 	// data row (1 row of data starting from the second row)
 	data := []string{
-		"development", "default", "workload-name", "ReplicaSet", "my-pod-abc", "nginx", "3",
+		"development", "default", "workload-name", "Deployment", "my-pod-abc", "nginx", "3",
 		"100m", "200m", "150m", "250m",
 		"128Mi", "256Mi", "200Mi", "300Mi",
 	}
@@ -119,7 +119,7 @@ func TestReadFromExcelNormalizingData(t *testing.T) {
 	tmpFile := "test_recommendations.xlsx"
 	// data row (1 row of data starting from the second row)
 	data := []string{
-		"prod", "default", "", "ReplicaSet", "my-pod-abc", "nginx", "3",
+		"prod", "default", "", "Deployment", "my-pod-abc", "nginx", "3",
 		"100", "200", "150", "250",
 		"128", "256", "200", "300",
 	}

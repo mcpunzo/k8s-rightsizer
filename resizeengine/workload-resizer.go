@@ -52,7 +52,7 @@ func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendatio
 		var err error
 		var workload WorkloadOps
 		switch rec.Kind {
-		case model.ReplicaSet:
+		case model.Deployment:
 			workload = deploymentWorkload
 		case model.StatefulSet:
 			workload = statefulSetWorkload

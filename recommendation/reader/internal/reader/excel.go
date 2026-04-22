@@ -15,7 +15,7 @@ type ExcelReader struct {
 
 // Read reads the Excel file and returns a slice of Recommendation structs
 // It assumes that the first row of the Excel file contains headers and that the data starts from the second row
-// The expected columns in the Excel file are: Environment, Namespace, Kind (ReplicaSet o StatefulSet), Workload Name, Container, Replicas, CPU Request [mCores], CPU Limit [mCores], CPU Request Recommended [mCores], CPU Limit Recommended [mCores], MEM Request [MB], MEM Limit [MB], MEM Request Recommended [MB], MEM Limit Recommended [MB]
+// The expected columns in the Excel file are: Environment, Namespace, Kind (Deployment o StatefulSet), Workload Name, Container, Replicas, CPU Request [mCores], CPU Limit [mCores], CPU Request Recommended [mCores], CPU Limit Recommended [mCores], MEM Request [MB], MEM Limit [MB], MEM Request Recommended [MB], MEM Limit Recommended [MB]
 // returns an error if there is an issue opening the file or reading the rows
 func (r *ExcelReader) Read() ([]model.Recommendation, error) {
 	f, err := excelize.OpenFile(r.FilePath)

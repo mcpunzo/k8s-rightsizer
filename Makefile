@@ -5,9 +5,17 @@ CONTAINER_ENGINE ?= $(shell which docker >/dev/null 2>&1 && echo docker || echo 
 
 # Variables
 APP_NAME := k8s-rightsizer
-REGISTRY_USER := mcpunzo
-VERSION := v0.0.1
+REGISTRY_USER ?= localhost
+VERSION ?=local
 IMG := $(REGISTRY_USER)/$(APP_NAME):$(VERSION)
+ENV ?= local
+
+# check for valid environment
+SUPPORTED_ENVS := local dev
+ifeq ($(filter $(ENV),$(SUPPORTED_ENVS)),)
+    $(error Invalid ENV=$(ENV). Supported envs are: $(SUPPORTED_ENVS))
+endif
+
 
 .PHONY: clean
 clean: ## Clean build artifacts
@@ -28,41 +36,45 @@ build-bin: ## Build the binary
 .PHONY: image-build
 image-build: ## Build the image
 	@echo "Building image..."
-	$(CONTAINER_ENGINE) b\uild -t $(IMG) .
+	$(CONTAINER_ENGINE) build -t $(IMG) .
 
 .PHONY: image-push
 image-push: ## Push the image to the registry
 	@echo "Pushing image..."
 	$(CONTAINER_ENGINE) push $(IMG)
 
-.PHONY: helm-local-deploy
-helm-local-deploy: ## Deploy with Helm (local)
-	@echo "Exporting image for local deployment..."
+.PHONY: deploy
+deploy: ## Deploy with Helm (usage: make deploy [ENV=local|dev] [REGISTRY_USER=your-registry-user] [VERSION=your-version])
+ifeq ($(ENV),local)
+	@echo "📦 Exporting image for local deployment..."
 	$(CONTAINER_ENGINE) save $(IMG) -o rightsizer.tar
-	@echo "Loading image into Minikube..."
+	@echo "🚚 Loading image into Minikube..."
 	minikube image load rightsizer.tar --profile k8s-rightsizer-lab
-	@echo "Cleaning up..."
-	rm rightsizer.tar
-	@echo "Deploying with Helm (local)..."
+	@echo "🧹 Cleaning up..."
+	rm rightsizer.tar	
+endif
+	@echo "🚀 Deploying with Helm to environment: $(ENV)..."
 	helm upgrade --install $(APP_NAME) ./k8s-rightsizer-helm \
+		-n k8s-rightsizer \
 		--create-namespace \
 		-f ./k8s-rightsizer-helm/values.yaml \
-  		-f ./k8s-rightsizer-helm/local/values.yaml \
-		
-
-.PHONY: helm-dev-deploy
-helm-dev-deploy: ## Deploy with Helm (development)
-	@echo "Deploying with Helm (development)..."
-	helm upgrade --install $(APP_NAME) ./k8s-rightsizer-helm \
-		--create-namespace \
-		-f ./k8s-rightsizer-helm/values.yaml \
-  		-f ./k8s-rightsizer-helm/dev/values.yaml \
-		--set image.repository=$(DOCKER_USER)/$(APP_NAME) \
+		-f ./k8s-rightsizer-helm/$(ENV)/values.yaml \
+		--set image.repository=$(REGISTRY_USER)/$(APP_NAME) \
 		--set image.tag=$(VERSION)
 
+.PHONY: undeploy
+undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))
+	@echo "🧹 Undeploying..."
+	helm uninstall $(APP_NAME) --namespace k8s-rightsizer
+	kubectl delete ns k8s-rightsizer
+
+
+
+echo:
+	@echo "$(IMG)"
 
 .PHONY: all
-all: image-build image-push helm-dev-deploy ## Perform all steps: build, push, and deploy
+all: image-build image-push deploy ## Perform all steps: build, push, and deploy
 	
 
 .DEFAULT_GOAL := help

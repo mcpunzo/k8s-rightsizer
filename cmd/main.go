@@ -5,8 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/mcpunzo/k8s-rightsizer/recommendation/reader"
 	re "github.com/mcpunzo/k8s-rightsizer/resizeengine"
@@ -17,13 +17,20 @@ import (
 )
 
 func main() {
-	_, currentFile, _, _ := runtime.Caller(0)
 	log.Println("--- Start Rightsizer ---")
 
-	inputFile := filepath.Join(filepath.Dir(currentFile), "..", "data", "recommendations.xlsx")
-	recFile := flag.String("file-path", inputFile, "Path to recommendations")
+	recFile := flag.String("file-path", "/Users/mariano/Documents/projects/k8s-rightsizer/test-env/local/data/recommendations.xlsx", "Path to recommendations")
 	dryRun := flag.Bool("dry-run", false, "Enable dry-run mode")
 	flag.Parse()
+
+	log.Printf("DryRun: %v", *dryRun)
+	log.Printf("Recommendations file: %v", *recFile)
+
+	fileInfo, err := os.Stat(*recFile)
+	if err != nil {
+		log.Fatalf("Error in file stats: %v", err)
+	}
+	log.Printf("File found! Size: %d bytes", fileInfo.Size())
 
 	// 1. Client Initialization
 	k8sClient, err := getClientset()
@@ -41,6 +48,8 @@ func main() {
 		log.Fatalf("Error reading: %v", err)
 	}
 
+	log.Printf("Recommendations read: %v", len(recs))
+
 	// 3. Execute Engine
 	engine := re.NewWorkloadResizer(k8sClient)
 	ctx := context.WithValue(context.Background(), "dryRun", *dryRun)
@@ -50,6 +59,7 @@ func main() {
 	}
 
 	log.Println("--- Rightsizer Complete ---")
+
 }
 
 func getClientset() (re.K8sClient, error) {

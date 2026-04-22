@@ -3,6 +3,7 @@ image:
   
 # Recommendations configuration
 recommendations:
+  pvcName: "recommendations-data-pvc" # The PVC where you upload the files
   fileName: "recommendations.xlsx"
   mountPath: "/data"
 

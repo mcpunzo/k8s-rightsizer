@@ -13,7 +13,4 @@ storage:
   # Note: You must have run 'minikube mount /your/pc/data:/mnt/data'
   hostPath: "/mnt/data"
 
-# Recommendations configuration
-recommendations:
-  pvcName: "recommendations-data-pvc" # The PVC where you upload the files
 

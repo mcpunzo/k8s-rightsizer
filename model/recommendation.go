@@ -5,8 +5,8 @@ import "fmt"
 type Kind string
 
 const (
-	ReplicaSet  Kind = "ReplicaSet"
-	StatefulSet Kind = "StatefuSet"
+	Deployment  Kind = "Deployment"
+	StatefulSet Kind = "StatefulSet"
 )
 
 type Recommendation struct {
