@@ -18,7 +18,7 @@ The tool reads a list of recommendations from an Excel file, applies them, and m
 * **Kubernetes Cluster** (v1.34+)
 * **Helm** (v4.1+)
 * **Go** (v1.25+) - *Only for local development*
-* **Make** (v1.25+)
+* **Make** (v4.3)
 * **Podman or Docker**
 
 
