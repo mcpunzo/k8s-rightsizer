@@ -95,12 +95,15 @@ make undeploy
 
 ## <img src="https://git-scm.com/images/logos/downloads/Git-Icon-1788C.png" width="25" height="25" /> Load recommendations from Git
 You can enable the k8s-rightsizer to download the recommendations file from your git repo on startup.
+All you need is set a bunch of environment variables before running make deploy.
 
 ```bash
-#1. set env variables
+# your git repo 
 export GIT_RECOMMENDATIONS_REPO=<your_repo>
-export GIT_RECOMMENDATIONS_FILE_PATH=<recommendations_file_path in your repo> #default is recommendations.xslx
-export GIT_BRANCH=<repo_branch> #default is main
+# the recommendations file path in your repo, if not set this variable default value is recommendations.xslx
+export GIT_RECOMMENDATIONS_FILE_PATH=<recommendations_file_path>
+# the git branch to clone, if not set this variable default value is main
+export GIT_BRANCH=<repo_branch>
 ```
 
 
