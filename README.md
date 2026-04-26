@@ -93,6 +93,17 @@ make undeploy
 ```
 
 
+## <img src="https://git-scm.com/images/logos/downloads/Git-Icon-1788C.png" width="25" height="25" /> Load recommendations from Git
+You can enable the k8s-rightsizer to download the recommendations file from your git repo on startup.
+
+```bash
+#1. set env variables
+export GIT_RECOMMENDATIONS_REPO=<your_repo>
+export GIT_RECOMMENDATIONS_FILE_PATH=<recommendations_file_path in your repo> #default is recommendations.xslx
+export GIT_BRANCH=<repo_branch> #default is main
+```
+
+
 # 🛡️ Rollback Logic Specification
 
 The **K8s Rightsizer** is built with a "Safety-First" approach. Instead of simply applying changes, it treats every resource update as a monitored transaction.

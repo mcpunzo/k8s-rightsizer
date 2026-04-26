@@ -9,6 +9,9 @@ REGISTRY_USER ?= localhost
 VERSION ?=local
 IMG := $(REGISTRY_USER)/$(APP_NAME):$(VERSION)
 ENV ?= local
+GIT_RECOMMENDATIONS_REPO ?=
+GIT_RECOMMENDATIONS_FILE_PATH ?= recommendations.xlsx
+GIT_BRANCH ?= main
 
 # check for valid environment
 SUPPORTED_ENVS := local dev
@@ -43,6 +46,17 @@ image-push: ## Push the image to the registry
 	@echo "Pushing image..."
 	$(CONTAINER_ENGINE) push $(IMG)
 
+
+GIT_EXTRA_ARGS := 
+ifeq ($(GIT_RECOMMENDATIONS_REPO),)
+	GIT_EXTRA_ARGS = --set recommendations.git.enabled=true \
+                      --set recommendations.git.repoUrl=$(GIT_RECOMMENDATIONS_REPO) \
+                      --set recommendations.git.fileSourcePath=$(GIT_RECOMMENDATIONS_FILE_PATH) \
+                      --set recommendations.git.branch=$(GIT_BRANCH)
+else
+	GIT_EXTRA_ARGS := 
+endif
+
 .PHONY: deploy
 deploy: ## Deploy with Helm (usage: make deploy [ENV=local|dev] [REGISTRY_USER=your-registry-user] [VERSION=your-version])
 ifeq ($(ENV),local)
@@ -60,18 +74,14 @@ endif
 		-f ./k8s-rightsizer-helm/values.yaml \
 		-f ./k8s-rightsizer-helm/$(ENV)/values.yaml \
 		--set image.repository=$(REGISTRY_USER)/$(APP_NAME) \
-		--set image.tag=$(VERSION)
+		--set image.tag=$(VERSION) \
+		$(GIT_EXTRA_ARGS)
 
 .PHONY: undeploy
 undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))
 	@echo "🧹 Undeploying..."
 	helm uninstall $(APP_NAME) --namespace k8s-rightsizer
 	kubectl delete ns k8s-rightsizer
-
-
-
-echo:
-	@echo "$(IMG)"
 
 .PHONY: all
 all: image-build image-push deploy ## Perform all steps: build, push, and deploy

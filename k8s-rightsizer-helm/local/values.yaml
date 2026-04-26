@@ -16,4 +16,4 @@ storage:
 recommendations:
   git:
     repository: "https://github.com/your-username/your-repo.git" # Change this to your repository
-    filePath: "./recommendations.xlsx"
+    filePath: "recommendations.xlsx"
