@@ -12,7 +12,6 @@ spec:
       labels:
         app: {{ include "k8s-rightsizer-helm.fullname" . }}
     spec:
-      serviceAccountName: {{ include "k8s-rightsizer-helm.fullname" . }}
       {{- if .Values.recommendations.git.enabled }}
       initContainers:
       - name: git-clone
@@ -30,6 +29,7 @@ spec:
         - name: recommendations-storage
           mountPath: {{ .Values.recommendations.mountPath }}
       {{- end }}
+      serviceAccountName: {{ include "k8s-rightsizer-helm.fullname" . }}
       containers:
       - name: rightsizer
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
