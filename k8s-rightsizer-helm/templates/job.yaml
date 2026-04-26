@@ -13,6 +13,23 @@ spec:
         app: {{ include "k8s-rightsizer-helm.fullname" . }}
     spec:
       serviceAccountName: {{ include "k8s-rightsizer-helm.fullname" . }}
+      {{- if .Values.recommendations.git.enabled }}
+      initContainers:
+      - name: git-clone
+        image: alpine/git:latest
+        imagePullPolicy: IfNotPresent
+        command:
+          - "/bin/sh"
+          - "-c"
+          - |
+            echo "Checking out recommendations from Git..."
+            git clone --depth=1 --branch {{ .Values.recommendations.git.branch }} {{ .Values.recommendations.git.repository }} /tmp/git-repo
+            cp /tmp/git-repo/{{ .Values.recommendations.git.fileSourcePath }} {{ .Values.recommendations.mountPath }}/{{ .Values.recommendations.fileName }}
+            echo "File successfully copied to {{ .Values.recommendations.mountPath }}/{{ .Values.recommendations.fileName }}"
+        volumeMounts:
+        - name: recommendations-storage
+          mountPath: {{ .Values.recommendations.mountPath }}
+      {{- end }}
       containers:
       - name: rightsizer
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

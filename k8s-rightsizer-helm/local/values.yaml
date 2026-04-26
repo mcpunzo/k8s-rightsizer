@@ -13,4 +13,7 @@ storage:
   # Note: You must have run 'minikube mount /your/pc/data:/mnt/data'
   hostPath: "/mnt/data"
 
-
+recommendations:
+  git:
+    repository: "https://github.com/your-username/your-repo.git" # Change this to your repository
+    filePath: "./recommendations.xlsx"

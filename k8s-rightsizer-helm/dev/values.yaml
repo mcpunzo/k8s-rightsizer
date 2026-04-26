@@ -9,3 +9,8 @@ storage:
   accessMode: ReadWriteMany
   storageClass: "standard" # Or "longhorn", "azurefile", "efs-sc".
   hostPath: "" # Not used in remote environments
+
+recommendations:
+  git:
+    repository: "https://github.com/your-username/your-repo.git" # Change this to your repository
+    filePath: "recommendations.xlsx"

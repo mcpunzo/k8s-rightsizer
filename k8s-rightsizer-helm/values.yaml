@@ -6,6 +6,9 @@ recommendations:
   pvcName: "recommendations-data-pvc" # The PVC where you upload the files
   fileName: "recommendations.xlsx"
   mountPath: "/data"
+  git:
+    enabled: false
+    branch: "main"
 
 rbac:
   create: true
