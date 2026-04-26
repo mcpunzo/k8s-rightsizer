@@ -12,6 +12,13 @@ ENV ?= local
 GIT_RECOMMENDATIONS_REPO ?=
 GIT_RECOMMENDATIONS_FILE_PATH ?= recommendations.xlsx
 GIT_BRANCH ?= main
+GIT_EXTRA_ARGS = $(if $(strip $(GIT_RECOMMENDATIONS_REPO)), \
+    --set recommendations.git.enabled=true \
+    --set recommendations.git.repoUrl=$(GIT_RECOMMENDATIONS_REPO) \
+    --set recommendations.git.fileSourcePath=$(GIT_RECOMMENDATIONS_FILE_PATH) \
+    --set recommendations.git.branch=$(GIT_BRANCH), \
+    --set recommendations.git.enabled=false)	
+
 
 # check for valid environment
 SUPPORTED_ENVS := local dev
@@ -47,16 +54,6 @@ image-push: ## Push the image to the registry
 	$(CONTAINER_ENGINE) push $(IMG)
 
 
-GIT_EXTRA_ARGS := 
-ifeq ($(GIT_RECOMMENDATIONS_REPO),)
-	GIT_EXTRA_ARGS = --set recommendations.git.enabled=true \
-                      --set recommendations.git.repoUrl=$(GIT_RECOMMENDATIONS_REPO) \
-                      --set recommendations.git.fileSourcePath=$(GIT_RECOMMENDATIONS_FILE_PATH) \
-                      --set recommendations.git.branch=$(GIT_BRANCH)
-else
-	GIT_EXTRA_ARGS := 
-endif
-
 .PHONY: deploy
 deploy: ## Deploy with Helm (usage: make deploy [ENV=local|dev] [REGISTRY_USER=your-registry-user] [VERSION=your-version])
 ifeq ($(ENV),local)
@@ -68,6 +65,7 @@ ifeq ($(ENV),local)
 	rm rightsizer.tar	
 endif
 	@echo "🚀 Deploying with Helm to environment: $(ENV)..."
+	@echo "ARGS: $(GIT_EXTRA_ARGS)"
 	helm upgrade --install $(APP_NAME) ./k8s-rightsizer-helm \
 		-n k8s-rightsizer \
 		--create-namespace \
