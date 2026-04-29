@@ -11,12 +11,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
 	WorkloadCheckInterval   = 10 * time.Second
-	DeploymentCheckTimeout  = 5 * time.Minute
-	StatefulsetCheckTimeout = 15 * time.Minute
+	DeploymentCheckTimeout  = 15 * time.Minute
+	StatefulsetCheckTimeout = 30 * time.Minute
 )
 
 // Resizer defines the interface for the resizer that processes recommendations and performs resizing operations on workloads.
@@ -127,14 +128,21 @@ func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recomme
 			return fmt.Errorf("impossible to create rollback recommendation for %s", workload.Name)
 		}
 
-		// Retrieve the fresh workload object from the cluster to avoid ResourceVersion conflicts
-		freshWorkload, errFetch := w.FindWorkload(ctx, rec)
-		if errFetch != nil {
-			return fmt.Errorf("critical error: failed to retrieve workload for rollback: %v", errFetch)
-		}
+		// Use a fresh context for rollback: the polling context may already be expired.
+		rollbackCtx := context.WithoutCancel(ctx)
+		// Retry on conflict: the deployment may still be rolling out when we try to update it,
+		// causing a ResourceVersion conflict ("object has been modified"). Re-fetch and retry.
+		errRollback := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			// Retrieve the fresh workload object from the cluster to avoid ResourceVersion conflicts
+			freshWorkload, errFetch := w.FindWorkload(rollbackCtx, rec)
+			if errFetch != nil {
+				return fmt.Errorf("failed to retrieve workload for rollback: %v", errFetch)
+			}
 
-		// Perform the resize to the original values (rollback)
-		errRollback := w.ResizeWorkload(ctx, freshWorkload, rollbackRec)
+			// Perform the resize to the original values (rollback)
+			return w.ResizeWorkload(ctx, freshWorkload, rollbackRec)
+		})
+
 		if errRollback != nil {
 			return fmt.Errorf("failed update (%v) and failed rollback (%v)", err, errRollback)
 		}
