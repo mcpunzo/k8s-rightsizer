@@ -55,7 +55,7 @@ func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workl
 	}
 
 	if !ResizeContainer(ctx, workload.Template, rec) {
-		return fmt.Errorf("container %s not found in deployment %s or resources already match recommendation", rec.Container, workload.Name)
+		return fmt.Errorf("skipping resize for container %s in deployment %s: container not found or resources already match recommendation", rec.Container, workload.Name)
 	}
 
 	deployment, ok := workload.OriginalResource.(*appsv1.Deployment)

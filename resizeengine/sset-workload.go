@@ -52,7 +52,7 @@ func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Work
 	}
 
 	if !ResizeContainer(ctx, workload.Template, rec) {
-		return fmt.Errorf("container %s not found in statefulset %s or resources already match recommendation", rec.Container, workload.Name)
+		return fmt.Errorf("skipping resize for container %s in statefulset %s: container not found or resources already match recommendation", rec.Container, workload.Name)
 	}
 
 	statefulSet, ok := workload.OriginalResource.(*appsv1.StatefulSet)

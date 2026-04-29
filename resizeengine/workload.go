@@ -64,7 +64,7 @@ func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, r
 			currentMem := c.Resources.Requests.Memory()
 
 			if currentCPU.Equal(recommendedCPU) && currentMem.Equal(recommendedMem) {
-				log.Printf("Container %s: resources match recommendation, skipping update", c.Name)
+				log.Printf("Container %s in workload %s: resources match recommendation", c.Name, rec.WorkloadName)
 				return false
 			}
 
@@ -75,5 +75,7 @@ func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, r
 			return true
 		}
 	}
+
+	log.Printf("Container %s not found in %s %s", rec.Container, rec.Kind, rec.WorkloadName)
 	return false
 }
