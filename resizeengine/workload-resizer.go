@@ -129,7 +129,8 @@ func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recomme
 		}
 
 		// Use a fresh context for rollback: the polling context may already be expired.
-		rollbackCtx := context.WithoutCancel(ctx)
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workloadCheckTimeout*time.Minute)
+		defer cancel()
 		// Retry on conflict: the deployment may still be rolling out when we try to update it,
 		// causing a ResourceVersion conflict ("object has been modified"). Re-fetch and retry.
 		errRollback := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -140,7 +141,7 @@ func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recomme
 			}
 
 			// Perform the resize to the original values (rollback)
-			return w.ResizeWorkload(ctx, freshWorkload, rollbackRec)
+			return w.ResizeWorkload(rollbackCtx, freshWorkload, rollbackRec)
 		})
 
 		if errRollback != nil {
