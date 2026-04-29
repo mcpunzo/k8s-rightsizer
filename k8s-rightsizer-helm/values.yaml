@@ -7,5 +7,9 @@ recommendations:
   fileName: "recommendations.xlsx"
   mountPath: "/data"
 
+settings:
+  resizeOnRecreate: false # Allow resizing if the workload update strategy is Recreate (default: false)
+  dryRun: false # Enable dry-run mode (default: false)
+
 rbac:
   create: true

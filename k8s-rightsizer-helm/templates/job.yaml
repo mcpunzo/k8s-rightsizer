@@ -20,6 +20,12 @@ spec:
         args: 
           - "--file-path"
           - "{{ .Values.recommendations.mountPath }}/{{ .Values.recommendations.fileName }}"
+          {{- if .Values.settings.dryRun }}
+          - "--dry-run"
+          {{- end }}
+          {{- if .Values.settings.resizeOnRecreate }}
+          - "--resize-on-recreate"
+          {{- end }}
         volumeMounts:
         - name: recommendations-storage
           mountPath: {{ .Values.recommendations.mountPath }}

@@ -9,6 +9,8 @@ REGISTRY_USER ?= localhost
 VERSION ?=local
 IMG := $(REGISTRY_USER)/$(APP_NAME):$(VERSION)
 ENV ?= local
+RESIZE_ON_RECREATE ?= false
+DRY_RUN ?= false
 
 # check for valid environment
 SUPPORTED_ENVS := local dev
@@ -60,7 +62,9 @@ endif
 		-f ./k8s-rightsizer-helm/values.yaml \
 		-f ./k8s-rightsizer-helm/$(ENV)/values.yaml \
 		--set image.repository=$(REGISTRY_USER)/$(APP_NAME) \
-		--set image.tag=$(VERSION)
+		--set image.tag=$(VERSION) \
+		--set settings.dryRun=$(DRY_RUN) \
+		--set settings.resizeOnRecreate=$(RESIZE_ON_RECREATE)
 
 .PHONY: undeploy
 undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))

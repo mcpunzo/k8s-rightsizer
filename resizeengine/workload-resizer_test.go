@@ -42,25 +42,29 @@ func contains(str, substr string) bool {
 	return len(str) >= len(substr) && str[:len(substr)] == substr
 }
 
-// --- TESTS ---
-
-func TestWorkloadResizer_ResizeWorkload(t *testing.T) {
-	t.Parallel()
-	baseTemplate := &corev1.PodTemplateSpec{
+func GetBasePodTemplate(cpu, mem string) *corev1.PodTemplateSpec {
+	return &corev1.PodTemplateSpec{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
 				{
 					Name: "app",
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("100m"),
-							corev1.ResourceMemory: resource.MustParse("128Mi"),
+							corev1.ResourceCPU:    resource.MustParse(cpu),
+							corev1.ResourceMemory: resource.MustParse(mem),
 						},
 					},
 				},
 			},
 		},
 	}
+}
+
+// --- TESTS ---
+
+func TestWorkloadResizer_ResizeWorkload(t *testing.T) {
+	t.Parallel()
+	baseTemplate := GetBasePodTemplate("100m", "128Mi")
 
 	tests := []struct {
 		name        string
@@ -153,23 +157,103 @@ func TestWorkloadResizer_ResizeWorkload(t *testing.T) {
 	}
 }
 
-func TestWorkloadResizer_ResizeWorkload_With_PDB(t *testing.T) {
+func TestWorkloadResizer_ResizeOnRecreateStrategy(t *testing.T) {
 	t.Parallel()
-	baseTemplate := &corev1.PodTemplateSpec{
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name: "app",
-					Resources: corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("100m"),
-							corev1.ResourceMemory: resource.MustParse("128Mi"),
-						},
-					},
+	baseTemplate := GetBasePodTemplate("100m", "128Mi")
+
+	tests := []struct {
+		name             string
+		rec              *model.Recommendation
+		ops              *mockWorkloadOps
+		wantErr          bool
+		errContains      string
+		resizeOnRecreate bool
+	}{
+		{
+			name: "Resize skipped due to Recreate strategy",
+			rec: &model.Recommendation{
+				WorkloadName:                "test",
+				Container:                   "app",
+				CpuRequestRecommendation:    "200m",
+				MemoryRequestRecommendation: "256Mi",
+			},
+			ops: &mockWorkloadOps{
+				findFunc: func() (*Workload, error) {
+					return &Workload{Name: "test", Namespace: "default", Template: baseTemplate.DeepCopy(), UpdateStrategy: "Recreate"}, nil
+				},
+				resizeFunc: func() error { return nil },
+				statusFunc: func() (*WorkloadStatus, error) {
+					return &WorkloadStatus{
+						ExpectedReplicas:   1,
+						UpdatedReplicas:    1,
+						AvailableReplicas:  1,
+						Generation:         1,
+						ObservedGeneration: 1,
+					}, nil
+				},
+				isPausedFunc: func() (bool, error) {
+					return false, nil
 				},
 			},
+			wantErr:     true,
+			errContains: "skipping resize due to UpdateStrategy set on Recreate",
+		},
+		{
+			name: "Resize done as per configuration due to Recreate strategy",
+			rec: &model.Recommendation{
+				WorkloadName:                "test",
+				Container:                   "app",
+				CpuRequestRecommendation:    "200m",
+				MemoryRequestRecommendation: "256Mi",
+			},
+			ops: &mockWorkloadOps{
+				findFunc: func() (*Workload, error) {
+					return &Workload{Name: "test", Namespace: "default", Template: baseTemplate.DeepCopy(), UpdateStrategy: "Recreate"}, nil
+				},
+				resizeFunc: func() error { return nil },
+				statusFunc: func() (*WorkloadStatus, error) {
+					return &WorkloadStatus{
+						ExpectedReplicas:   1,
+						UpdatedReplicas:    1,
+						AvailableReplicas:  1,
+						Generation:         1,
+						ObservedGeneration: 1,
+					}, nil
+				},
+				isPausedFunc: func() (bool, error) {
+					return false, nil
+				},
+			},
+			wantErr:          false,
+			errContains:      "",
+			resizeOnRecreate: true,
 		},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewSimpleClientset()
+			resizer := NewWorkloadResizer(fakeClient)
+
+			ctx := context.Background()
+			ctx = context.WithValue(ctx, "resizeOnRecreate", tt.resizeOnRecreate)
+			err := resizer.ResizeWorkload(ctx, tt.rec, tt.ops)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ResizeWorkload() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && tt.errContains != "" {
+				if err == nil || !contains(err.Error(), tt.errContains) {
+					t.Errorf("expected error to contain %q, got %v", tt.errContains, err)
+				}
+			}
+		})
+	}
+}
+
+func TestWorkloadResizer_ResizeWorkload_With_PDB(t *testing.T) {
+	t.Parallel()
+	baseTemplate := GetBasePodTemplate("100m", "128Mi")
 
 	appLabels := map[string]string{"app": "my-service"}
 

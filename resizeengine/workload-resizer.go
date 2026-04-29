@@ -191,8 +191,11 @@ func (r *WorkloadResizer) ResizePrecheck(ctx context.Context, rec *model.Recomme
 	case "OnDelete":
 		return false, fmt.Errorf("skipping resize due to UpdateStrategy set OnDelete for %s: resizing would have no effect", rec)
 	case "Recreate":
-		//TODO: we could make this configurable by allowing the user to choose whether to proceed with a warning or to skip, but for now let's skip to be safe.
-		return false, fmt.Errorf("skipping resize due to UpdateStrategy set Recreate for %s: resizing may cause downtime", rec)
+		resizeOnRecreate := ctx.Value("resizeOnRecreate")
+		if resizeOnRecreate == nil || !resizeOnRecreate.(bool) {
+			return false, fmt.Errorf("skipping resize due to UpdateStrategy set on Recreate for %s: resizing may cause downtime", rec)
+		}
+		log.Printf("Warning: UpdateStrategy is set to Recreate for %s. Resizing may cause downtime, but proceeding as per configuration.\n", rec)
 	}
 	// if we are here, it means that the UpdateStrategy is RollingUpdate, so we can proceed with the resize operation.
 	// we could add another check on statefulset and check if the partition is set to 0, which means that all pods will be updated at once, and in that case we could skip the resize to avoid potential downtime. This can be done by retrieving the current UpdateStrategy of the statefulset and checking the partition value before proceeding with the resize operation.
