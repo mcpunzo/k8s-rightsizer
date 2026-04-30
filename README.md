@@ -106,6 +106,10 @@ export GIT_RECOMMENDATIONS_FILE_PATH=<recommendations_file_path>
 export GIT_BRANCH=<repo_branch>
 ```
 
+*Note*: For private, there are only 2 authentications mechanisms supported
+1. Token (HTTPS): You can use a Personal Access Token (PAT) in theURL (es. https://<token>@github.com/...). Please use a secret to store this token
+2. SSH: Mount an SSH secret into the pod
+
 
 # 🛡️ Rollback Logic Specification
 
