@@ -92,6 +92,18 @@ make deploy ENV=dev
 make undeploy
 ```
 
+# ⚙️ Execution Parameters
+
+Below is a list of all the parameters of the k8s-rightsizer. You can use them by setting env variables as shown above.
+
+| Parameter            | Value       | Default   | Description                                                      |
+|----------------------|-------------|-----------|------------------------------------------------------------------|
+| REGISTRY_USER        |             | localhost | The Container Registry                                           |
+| VERSION              |             | local     | Version of the container image                                   |
+| IMG                  | $(REGISTRY_USER)/k8s-rightsizer:$(VERSION) |           | Container image name and tag                                     |
+| ENV                  | local \| dev  | local     | The tool execution environment                                   |
+| RESIZE_ON_RECREATE   | true \| false | false     | Whether to resize workload with update strategy Recreate         |
+| DRY_RUN              | true \| false | false     | Plan the execution without resizing containers                   |
 
 ## <img src="https://git-scm.com/images/logos/downloads/Git-Icon-1788C.png" width="25" height="25" /> Load recommendations from Git
 You can enable the k8s-rightsizer to download the recommendations file from your git repo on startup.
@@ -130,7 +142,7 @@ A resize operation is automatically skipped if any of the following conditions a
 
 * **Unsupported Update Strategies**: Only RollingUpdate is currently supported to ensure zero-downtime transitions.
   - OnDelete: Skipped because the update wouldn't trigger automatically.
-  - Recreate: Skipped to avoid the full downtime typical of this strategy.
+  - Recreate: Skipped by default to avoid the full downtime typical of this strategy. You can change this behavior by setting the *-resize-on-procreate* parameter to true.
 
 * **Degraded Health**: The workload is not healthy. We don't resize unstable systems.
 * **Ongoing Rollout**: A deployment is already in progress. We wait for the system to reach a stable state.

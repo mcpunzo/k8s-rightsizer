@@ -19,12 +19,14 @@ import (
 func main() {
 	log.Println("--- Start Rightsizer ---")
 
-	recFile := flag.String("file-path", "/Users/mariano/Documents/projects/k8s-rightsizer/test-env/local/data/recommendations.xlsx", "Path to recommendations")
+	recFile := flag.String("file-path", "", "Path to recommendations")
 	dryRun := flag.Bool("dry-run", false, "Enable dry-run mode")
+	resizeOnRecreate := flag.Bool("resize-on-recreate", false, "Allow resizing if the workload update strategy is Recreate (default: false)")
 	flag.Parse()
 
 	log.Printf("DryRun: %v", *dryRun)
 	log.Printf("Recommendations file: %v", *recFile)
+	log.Printf("Resize on Recreate: %v", *resizeOnRecreate)
 
 	fileInfo, err := os.Stat(*recFile)
 	if err != nil {
@@ -53,6 +55,7 @@ func main() {
 	// 3. Execute Engine
 	engine := re.NewWorkloadResizer(k8sClient)
 	ctx := context.WithValue(context.Background(), "dryRun", *dryRun)
+	ctx = context.WithValue(ctx, "resizeOnRecreate", *resizeOnRecreate)
 
 	if err := engine.Resize(ctx, recs); err != nil {
 		log.Printf("Resize process completed with some issues: %v", err)

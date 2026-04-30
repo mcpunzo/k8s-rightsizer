@@ -9,6 +9,8 @@ REGISTRY_USER ?= localhost
 VERSION ?=local
 IMG := $(REGISTRY_USER)/$(APP_NAME):$(VERSION)
 ENV ?= local
+RESIZE_ON_RECREATE ?= false
+DRY_RUN ?= false
 GIT_RECOMMENDATIONS_REPO ?=
 GIT_RECOMMENDATIONS_FILE_PATH ?= recommendations.xlsx
 GIT_BRANCH ?= main
@@ -73,6 +75,8 @@ endif
 		-f ./k8s-rightsizer-helm/$(ENV)/values.yaml \
 		--set image.repository=$(REGISTRY_USER)/$(APP_NAME) \
 		--set image.tag=$(VERSION) \
+		--set settings.dryRun=$(DRY_RUN) \
+		--set settings.resizeOnRecreate=$(RESIZE_ON_RECREATE) \
 		$(GIT_EXTRA_ARGS)
 
 .PHONY: undeploy
