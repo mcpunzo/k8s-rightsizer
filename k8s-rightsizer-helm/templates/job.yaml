@@ -20,6 +20,8 @@ spec:
         args: 
           - "--file-path"
           - "{{ .Values.recommendations.mountPath }}/{{ .Values.recommendations.fileName }}"
+          - "--workers"
+          - "{{ .Values.settings.workers }}"
           {{- if .Values.settings.dryRun }}
           - "--dry-run"
           {{- end }}

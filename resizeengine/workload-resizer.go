@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
@@ -27,56 +28,126 @@ type Resizer interface {
 
 // WorkloadResizer is an implementation of the Resizer interface that processes recommendations and performs resizing operations on Kubernetes workloads (Deployments and StatefulSets).
 type WorkloadResizer struct {
-	client K8sClient
+	client              K8sClient
+	deploymentWorkload  *DeploymentWorkload
+	statefulSetWorkload *StatefulSetWorkload
 }
 
 // NewWorkloadResizer creates a new instance of WorkloadResizer with the provided Kubernetes client.
 // param client: The Kubernetes client used to interact with the cluster.
 // returns: A pointer to a new instance of WorkloadResizer.
 func NewWorkloadResizer(client K8sClient) *WorkloadResizer {
-	return &WorkloadResizer{client: client}
+	return &WorkloadResizer{
+		client:              client,
+		deploymentWorkload:  &DeploymentWorkload{client: client},
+		statefulSetWorkload: &StatefulSetWorkload{client: client},
+	}
 }
 
-// Resize processes a list of recommendations and performs resizing operations on the corresponding workloads based on their type (Deployment or StatefulSet).
-// It retrieves the current state of each workload, applies the resizing changes, and checks the status of the workload after the update.
-// If any critical errors are detected during the status check, it attempts to roll back to the original resource values.
+// Resize processes a list of recommendations and performs resizing operations on the corresponding workloads concurrently using worker goroutines.
+// It creates a pool of worker goroutines that listen for recommendations on a channel, processes them, and sends the results to another channel.
+// The function waits for all workers to complete before closing the results channel and logging the outcomes.
 // param ctx: The context for managing request deadlines and cancellation.
-// param recs: A slice of Recommendations to be processed.
-// returns: An error if any issues occur during processing, resizing, or rollback operations.
+// param recs: A slice of Recommendations to be processed for resizing workloads.
+// returns: An error if any issues occur during processing, or nil if all recommendations are processed successfully.
 func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendation) error {
-	deploymentWorkload := &DeploymentWorkload{client: r.client}
-	statefulSetWorkload := &StatefulSetWorkload{client: r.client}
-
-	for _, rec := range recs {
-		log.Printf("Processing %s\n", rec)
-
-		var err error
-		var workload WorkloadOps
-		switch rec.Kind {
-		case model.Deployment:
-			workload = deploymentWorkload
-		case model.StatefulSet:
-			workload = statefulSetWorkload
-		default:
-			err = fmt.Errorf("unsupported resource Kind for %s", rec.Kind)
-		}
-
-		if err != nil {
-			log.Printf("[KO] failed to resize %s: %v\n", rec, err)
-			continue
-		}
-
-		err = r.ResizeWorkload(ctx, &rec, workload)
-		if err != nil {
-			log.Printf("[KO] failed to resize %s: %v\n", rec, err)
-			continue
-		}
-
-		log.Printf("[OK] Resource resized for %s\n", rec)
-		time.Sleep(1 * time.Second) // Small delay between processing recommendations to avoid overwhelming the cluster
+	numberOfWorkers := 1
+	if nw, ok := ctx.Value("numberOfWorkers").(int); ok {
+		numberOfWorkers = nw
 	}
 
+	// Problem: with parallel resizing executions and a resize strategy by container
+	// we can incurr in situation where more than 1 goroutines update the same workload causing an update conflict
+	// Solution: Create Shards, i.e. dedicated channel per worker and recs for the same workload are always send to
+	// the same shard and then processed by the same worker, avoiding update conflicts and retries.
+	resizeJobShards := make([]chan *model.Recommendation, numberOfWorkers)
+	for i := range resizeJobShards {
+		resizeJobShards[i] = make(chan *model.Recommendation, len(recs))
+	}
+
+	results := make(chan string, len(recs))
+
+	// Start a goroutine to print results as they come into avoid waiting until all processing is done to see the output, and to prevent potential memory issues if there are many recommendations.
+	donePrinting := make(chan bool)
+	go func() {
+		for res := range results {
+			log.Println(res)
+		}
+		donePrinting <- true
+	}()
+
+	var wg sync.WaitGroup
+	for i := range resizeJobShards {
+		wg.Add(1)
+		go func(shardIndex int) {
+			defer wg.Done()
+			r.ResizeJob(ctx, resizeJobShards[shardIndex], results)
+		}(i)
+	}
+
+	//distribute recs to channels according to the WorkloadId
+	for _, rec := range recs {
+		shardId := GetShardIndex(rec.WorkloadID(), numberOfWorkers)
+		resizeJobShards[shardId] <- &rec
+	}
+
+	//cleanup
+	for i := range resizeJobShards {
+		close(resizeJobShards[i])
+	}
+
+	wg.Wait()
+	close(results)
+
+	<-donePrinting // Wait for the printing goroutine to finish before exiting
 	return nil
+}
+
+// ResizeJob is a worker function that processes recommendations from the recs channel, performs resizing operations on the corresponding workloads, and sends the results to the results channel.
+// It listens for recommendations and context cancellation, and handles errors appropriately while processing each recommendation.
+// param ctx: The context for managing request deadlines and cancellation.
+// param recs: A channel from which to receive Recommendations to be processed.
+// param results: A channel to which to send the results of the resizing operations.
+func (r *WorkloadResizer) ResizeJob(ctx context.Context, recs <-chan *model.Recommendation, results chan<- string) {
+	for rec := range recs {
+		select {
+		case <-ctx.Done():
+			log.Printf("Context canceled, stopping ResizeJob")
+			return
+		default:
+			log.Printf("Processing recommendation for %s (%s) in namespace %s\n", rec.WorkloadName, rec.Kind, rec.Namespace)
+
+			var err error
+			var workload WorkloadOps
+			switch rec.Kind {
+			case model.Deployment:
+				workload = r.deploymentWorkload
+			case model.ReplicaSet:
+				workload = r.deploymentWorkload
+			case model.StatefulSet:
+				workload = r.statefulSetWorkload
+			default:
+				err = fmt.Errorf("unsupported resource Kind for %s", rec.Kind)
+			}
+
+			if err != nil {
+				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", rec, err)
+				results <- errMsg
+				continue
+			}
+
+			err = r.ResizeWorkload(ctx, rec, workload)
+			if err != nil {
+				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", rec, err)
+				results <- errMsg
+				continue
+			}
+
+			okMsg := fmt.Sprintf("[OK] Resource resized for %s", rec)
+			results <- okMsg
+			time.Sleep(1 * time.Second) // Small delay between processing recommendations to avoid overwhelming the cluster
+		}
+	}
 }
 
 // ResizeWorkload performs the resizing operation on a specific workload based on the provided recommendation and workload operations.

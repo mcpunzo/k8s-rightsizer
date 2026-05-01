@@ -51,7 +51,11 @@ func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Work
 		return fmt.Errorf("invalid workload type: expected StatefulSet, got %s", workload.WorkloadType)
 	}
 
-	if !ResizeContainer(ctx, workload.Template, rec) {
+	updated, err := ResizeContainer(ctx, workload.Template, rec)
+	if err != nil {
+		return fmt.Errorf("skipping resize for container %s in statefulset %s: %v", rec.Container, workload.Name, err)
+	}
+	if !updated {
 		return fmt.Errorf("skipping resize for container %s in statefulset %s: container not found or resources already match recommendation", rec.Container, workload.Name)
 	}
 
@@ -60,14 +64,12 @@ func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Work
 		return fmt.Errorf("failed to cast original resource to StatefulSet for %s", workload.Name)
 	}
 
-	dryRun := ctx.Value("dryRun")
-
-	if dryRun != nil && dryRun.(bool) {
+	if dryRun, ok := ctx.Value("dryRun").(bool); ok && dryRun {
 		log.Printf("[Dry-Run] Would update statefulset %s/%s with new resources\n", workload.Namespace, workload.Name)
 		return nil
 	}
 
-	_, err := w.client.AppsV1().StatefulSets(rec.Namespace).Update(ctx, statefulSet, metav1.UpdateOptions{})
+	_, err = w.client.AppsV1().StatefulSets(rec.Namespace).Update(ctx, statefulSet, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update statefulset %s: %w", workload.Name, err)
 	}

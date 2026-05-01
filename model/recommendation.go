@@ -7,6 +7,7 @@ type Kind string
 const (
 	Deployment  Kind = "Deployment"
 	StatefulSet Kind = "StatefulSet"
+	ReplicaSet  Kind = "ReplicaSet"
 )
 
 type Recommendation struct {
@@ -56,4 +57,10 @@ func (r *Recommendation) DeepCopy() *Recommendation {
 
 	newRec := *r
 	return &newRec
+}
+
+// WorkloadID generates a unique identifier for the workload based on its environment, namespace, kind, and name.
+// returns: A string that uniquely identifies the workload in the format "Environment-Namespace-Kind-WorkloadName".
+func (r *Recommendation) WorkloadID() string {
+	return fmt.Sprintf("%s-%s-%s-%s", r.Environment, r.Namespace, r.Kind, r.WorkloadName)
 }

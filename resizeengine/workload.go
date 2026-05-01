@@ -2,6 +2,8 @@ package resizeengine
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
@@ -52,8 +54,8 @@ type Workload struct {
 // param ctx: The context for managing request deadlines and cancellation.
 // param podTemplate: The PodTemplateSpec to be modified.
 // param rec: The Recommendation containing the new resource requests and target container information.
-// returns: A boolean indicating whether the container was found and updated.
-func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, rec *model.Recommendation) bool {
+// returns: A boolean indicating whether the container was found and updated. An error is returned if the container is not found or if the resources already match the recommendation.
+func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, rec *model.Recommendation) (bool, error) {
 	for i, c := range podTemplate.Spec.Containers {
 		if c.Name == rec.Container {
 
@@ -64,18 +66,20 @@ func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, r
 			currentMem := c.Resources.Requests.Memory()
 
 			if currentCPU.Equal(recommendedCPU) && currentMem.Equal(recommendedMem) {
-				log.Printf("Container %s in workload %s: resources match recommendation", c.Name, rec.WorkloadName)
-				return false
+				msg := fmt.Sprintf("Container %s in workload %s: resources match recommendation", c.Name, rec.WorkloadName)
+				log.Print(msg)
+				return false, errors.New(msg)
 			}
 
 			podTemplate.Spec.Containers[i].Resources.Requests = corev1.ResourceList{
 				corev1.ResourceCPU:    recommendedCPU,
 				corev1.ResourceMemory: recommendedMem,
 			}
-			return true
+			return true, nil
 		}
 	}
 
-	log.Printf("Container %s not found in %s %s", rec.Container, rec.Kind, rec.WorkloadName)
-	return false
+	msg := fmt.Sprintf("Container %s not found in %s %s", rec.Container, rec.Kind, rec.WorkloadName)
+	log.Print(msg)
+	return false, errors.New(msg)
 }

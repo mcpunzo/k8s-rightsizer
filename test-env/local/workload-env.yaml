@@ -5,7 +5,7 @@ metadata:
   name: test-standard-rolling
   namespace: k8s-rightsizer-test
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: standard-app
@@ -21,8 +21,8 @@ spec:
         image: nginx:stable-alpine
         resources:
           requests:
-            memory: "64Mi"
-            cpu: "100m"
+            memory: "128Mi"
+            cpu: "200m"
 ---
 # --- 2. DEPLOYMENT WITH RESTRICTIVE PDB (Safety Block Case) ---
 apiVersion: apps/v1
@@ -77,3 +77,87 @@ spec:
       containers:
       - name: nginx
         image: nginx:stable-alpine
+---
+# --- 4. MULTI-CONTAINER DEPLOYMENT (Sharding & Conflict Test) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-multi-container-sharding
+  namespace: k8s-rightsizer-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multi-container
+  template:
+    metadata:
+      labels:
+        app: multi-container
+    spec:
+      containers:
+      - name: sidecar-1
+        image: busybox
+        command: ["sh", "-c", "sleep 3600"]
+      - name: sidecar-2
+        image: busybox
+        command: ["sh", "-c", "sleep 3600"]
+      - name: main-app
+        image: nginx:stable-alpine
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "200m"
+---
+# --- 5. STATEFULSET ROLLING UPDATE (Success Case) ---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: test-sts-standard
+  namespace: k8s-rightsizer-test
+spec:
+  serviceName: "nginx-standard"
+  replicas: 1
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: sts-ok
+  template:
+    metadata:
+      labels:
+        app: sts-ok
+    spec:
+      containers:
+      - name: redis
+        image: redis:alpine
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "200m"
+---
+# --- 6. DEPLOYMENT WITH RECREATE STRATEGY (Downtime Case) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-recreate-strategy
+  namespace: k8s-rightsizer-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: recreate-app
+  strategy:
+    type: Recreate # This will trigger your downtime case in the switch statement
+  template:
+    metadata:
+      labels:
+        app: recreate-app
+    spec:
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["sh", "-c", "sleep 3600"]
+        resources:
+          requests:
+            cpu: "150m"
+            memory: "48Mi"

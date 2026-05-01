@@ -104,6 +104,13 @@ Below is a list of all the parameters of the k8s-rightsizer. You can use them by
 | ENV                  | local \| dev  | local     | The tool execution environment                                   |
 | RESIZE_ON_RECREATE   | true \| false | false     | Whether to resize workload with update strategy Recreate         |
 | DRY_RUN              | true \| false | false     | Plan the execution without resizing containers                   |
+| WORKERS              |               | 1         | Number of concurrent resizing workers*                            |
+
+*Using concurrent workers can be helpful for speeding up work. Considerations:
+- 3-5 workers are a safe and prudent threshold
+- 10 workers for robust clusters with small microservices
+- 20+ workers is not recommended as it may cause **node pressure**
+
 
 # 🛡️ Rollback Logic Specification
 

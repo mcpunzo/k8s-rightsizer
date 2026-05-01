@@ -84,7 +84,11 @@ func TestResizeContainer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			gotUpdated := ResizeContainer(ctx, tt.podTemplate, tt.recommendation)
+			gotUpdated, err := ResizeContainer(ctx, tt.podTemplate, tt.recommendation)
+
+			if err != nil && gotUpdated {
+				t.Fatalf("ResizeContainer() error = %v", err)
+			}
 
 			if gotUpdated != tt.wantUpdated {
 				t.Errorf("ResizeContainer() gotUpdated = %v, want %v", gotUpdated, tt.wantUpdated)

@@ -54,7 +54,11 @@ func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workl
 		return fmt.Errorf("invalid workload type: expected Deployment, got %s", workload.WorkloadType)
 	}
 
-	if !ResizeContainer(ctx, workload.Template, rec) {
+	updated, err := ResizeContainer(ctx, workload.Template, rec)
+	if err != nil {
+		return fmt.Errorf("skipping resize for container %s in deployment %s: %v", rec.Container, workload.Name, err)
+	}
+	if !updated {
 		return fmt.Errorf("skipping resize for container %s in deployment %s: container not found or resources already match recommendation", rec.Container, workload.Name)
 	}
 
@@ -70,7 +74,7 @@ func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workl
 		return nil
 	}
 
-	_, err := w.client.AppsV1().Deployments(rec.Namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+	_, err = w.client.AppsV1().Deployments(rec.Namespace).Update(ctx, deployment, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update deployment %s: %w", workload.Name, err)
 	}

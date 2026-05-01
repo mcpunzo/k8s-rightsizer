@@ -22,11 +22,19 @@ func main() {
 	recFile := flag.String("file-path", "", "Path to recommendations")
 	dryRun := flag.Bool("dry-run", false, "Enable dry-run mode")
 	resizeOnRecreate := flag.Bool("resize-on-recreate", false, "Allow resizing if the workload update strategy is Recreate (default: false)")
+	numberOfWorkers := flag.Int("workers", 1, "Number of concurrent workers for processing recommendations")
 	flag.Parse()
+
+	if *numberOfWorkers <= 0 {
+		log.Fatal("workers parameters must be greater than 0")
+	}
 
 	log.Printf("DryRun: %v", *dryRun)
 	log.Printf("Recommendations file: %v", *recFile)
 	log.Printf("Resize on Recreate: %v", *resizeOnRecreate)
+	log.Printf("Number of workers: %v", *numberOfWorkers)
+
+	
 
 	fileInfo, err := os.Stat(*recFile)
 	if err != nil {
@@ -56,6 +64,7 @@ func main() {
 	engine := re.NewWorkloadResizer(k8sClient)
 	ctx := context.WithValue(context.Background(), "dryRun", *dryRun)
 	ctx = context.WithValue(ctx, "resizeOnRecreate", *resizeOnRecreate)
+	ctx = context.WithValue(ctx, "numberOfWorkers", *numberOfWorkers)
 
 	if err := engine.Resize(ctx, recs); err != nil {
 		log.Printf("Resize process completed with some issues: %v", err)

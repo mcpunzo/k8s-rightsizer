@@ -11,6 +11,7 @@ IMG := $(REGISTRY_USER)/$(APP_NAME):$(VERSION)
 ENV ?= local
 RESIZE_ON_RECREATE ?= false
 DRY_RUN ?= false
+WORKERS ?= 1
 
 # check for valid environment
 SUPPORTED_ENVS := local dev
@@ -29,6 +30,11 @@ clean: ## Clean build artifacts
 test: clean ## Run tests
 	@echo "Running tests..."
 	go test -v --cover ./...
+
+.PHONY: vet
+vet: ## Run static analysis
+	@echo "Static check..."
+	go vet ./...
 
 .PHONY: build-bin
 build-bin: ## Build the binary
@@ -64,7 +70,8 @@ endif
 		--set image.repository=$(REGISTRY_USER)/$(APP_NAME) \
 		--set image.tag=$(VERSION) \
 		--set settings.dryRun=$(DRY_RUN) \
-		--set settings.resizeOnRecreate=$(RESIZE_ON_RECREATE)
+		--set settings.resizeOnRecreate=$(RESIZE_ON_RECREATE) \
+		--set settings.workers="$(WORKERS)"
 
 .PHONY: undeploy
 undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))

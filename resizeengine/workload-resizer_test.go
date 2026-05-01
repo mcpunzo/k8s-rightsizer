@@ -3,9 +3,12 @@ package resizeengine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -616,6 +619,121 @@ func TestWorkloadResizer_IsPDBTooRestrictive(t *testing.T) {
 			}
 			if got != tt.wantResult {
 				t.Errorf("IsPDBTooRestrictive() got = %v, want %v", got, tt.wantResult)
+			}
+		})
+	}
+}
+
+func TestResizeJob_TableDriven_FakeClient(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		initialObjects []runtime.Object
+		recommendation model.Recommendation
+		ctxTimeout     time.Duration
+		expectedInRes  string
+		expectStatus   bool // true if we expect an [OK]
+	}{
+		{
+			name: "Success Deployment",
+			initialObjects: []runtime.Object{
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Name: "app-1", Namespace: "default"},
+					Spec: appsv1.DeploymentSpec{
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "container-1"}},
+							},
+						},
+					},
+				},
+			},
+			recommendation: model.Recommendation{
+				WorkloadName: "app-1", Namespace: "default", Kind: model.Deployment, Container: "container-1", CpuRequestRecommendation: "200m", MemoryRequestRecommendation: "256Mi",
+			},
+			expectedInRes: "[OK]",
+			expectStatus:  true,
+		},
+		{
+			name:           "Error - Deployment not found",
+			initialObjects: []runtime.Object{},
+			recommendation: model.Recommendation{
+				WorkloadName: "missing-app", Namespace: "default", Kind: model.Deployment, Container: "container-1", CpuRequestRecommendation: "200m", MemoryRequestRecommendation: "256Mi",
+			},
+			expectedInRes: "[KO]",
+			expectStatus:  false,
+		},
+		{
+			name: "Success StatefulSet",
+			initialObjects: []runtime.Object{
+				&appsv1.StatefulSet{
+					ObjectMeta: metav1.ObjectMeta{Name: "db-1", Namespace: "prod-ns"},
+					Spec: appsv1.StatefulSetSpec{
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "postgres"}},
+							},
+						},
+					},
+				},
+			},
+			recommendation: model.Recommendation{
+				WorkloadName: "db-1", Namespace: "prod-ns", Kind: model.StatefulSet, Container: "postgres", CpuRequestRecommendation: "200m", MemoryRequestRecommendation: "256Mi",
+			},
+			expectedInRes: "[OK]",
+			expectStatus:  true,
+		},
+		{
+			name:           "Kind Sconosciuto",
+			initialObjects: []runtime.Object{},
+			recommendation: model.Recommendation{
+				WorkloadName: "job-1", Namespace: "default", Kind: "CronJob", Container: "container-1", CpuRequestRecommendation: "200m", MemoryRequestRecommendation: "256Mi",
+			},
+			expectedInRes: "unsupported resource Kind",
+			expectStatus:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// 2. Setup del Fake Client e del Resizer
+			client := fake.NewSimpleClientset(tc.initialObjects...)
+
+			// Inizializza il tuo resizer. Assicurati che passi il fake client ai gestori dei carichi.
+			r := NewWorkloadResizer(client)
+
+			recsChan := make(chan *model.Recommendation, 1)
+			resultsChan := make(chan string, 1)
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+
+			// 3. Esecuzione del test
+			go func() {
+				recsChan <- &tc.recommendation
+				close(recsChan)
+			}()
+
+			r.ResizeJob(ctx, recsChan, resultsChan)
+			close(resultsChan)
+
+			// 4. Verifiche
+			res, ok := <-resultsChan
+			if !ok {
+				t.Fatalf("Nessun risultato ricevuto dal canale results")
+			}
+
+			if !strings.Contains(res, tc.expectedInRes) {
+				t.Errorf("Risultato errato. Atteso contenente: %s, Ottenuto: %s", tc.expectedInRes, res)
+			}
+
+			// Verifica finale sul cluster fake se il test doveva avere successo
+			if tc.expectStatus {
+				if tc.recommendation.Kind == model.Deployment {
+					_, err := client.AppsV1().Deployments(tc.recommendation.Namespace).Get(ctx, tc.recommendation.WorkloadName, metav1.GetOptions{})
+					if err != nil {
+						t.Errorf("Il deployment doveva esistere ma Get ha dato errore: %v", err)
+					}
+				}
 			}
 		})
 	}
