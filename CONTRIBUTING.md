@@ -17,4 +17,4 @@ First off, thank you for considering contributing! It's people like you that mak
 - Use `make build-bin` to compile the binary.
 
 ## Security
-If you find a security vulnerability, please do NOT open an issue. Email mcpunzo@gmail.com instead.
+If you find a security vulnerability, please do NOT open an issue. Email security@k8srightsizer.com instead.
