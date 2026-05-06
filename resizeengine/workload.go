@@ -83,3 +83,48 @@ func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, r
 	log.Print(msg)
 	return false, errors.New(msg)
 }
+
+// ValidateRecommendations checks if the recommendations for CPU and Memory requests are valid for the specified container in the workload.
+// It ensures that the recommended requests do not exceed the current limits set on the container.
+// Returns an error if the container is not found or if the recommendations are invalid.
+// param ctx: The context for managing request deadlines and cancellation.
+// param podTemplate: The PodTemplateSpec containing the container to be validated.
+// param rec: The Recommendation containing the new resource requests and target container information.
+// returns: An error if the container is not found or if the recommendations are invalid.
+func (w *Workload) ValidateRecommendations(ctx context.Context, podTemplate *corev1.PodTemplateSpec, rec *model.Recommendation) error {
+	recCpu, err := resource.ParseQuantity(rec.CpuRequestRecommendation)
+	if err != nil {
+		return fmt.Errorf("invalid cpu request recommendation: %v", err)
+	}
+	recMem, err := resource.ParseQuantity(rec.MemoryRequestRecommendation)
+	if err != nil {
+		return fmt.Errorf("invalid memory request recommendation: %v", err)
+	}
+
+	var container *corev1.Container
+	for i, c := range podTemplate.Spec.Containers {
+		if c.Name == rec.Container {
+			container = &podTemplate.Spec.Containers[i]
+			break
+		}
+	}
+
+	if container == nil {
+		return fmt.Errorf("container %s not found in workload %s", rec.Container, rec.WorkloadName)
+	}
+
+	limitCpu := container.Resources.Limits.Cpu()
+	limitMem := container.Resources.Limits.Memory()
+
+	if limitCpu != nil && !limitCpu.IsZero() && recCpu.Cmp(*limitCpu) > 0 {
+		return fmt.Errorf("cpu request (%s) cannot be greater than current limit (%s)",
+			rec.CpuRequestRecommendation, limitCpu.String())
+	}
+
+	if limitMem != nil && !limitMem.IsZero() && recMem.Cmp(*limitMem) > 0 {
+		return fmt.Errorf("memory request (%s) cannot be greater than current limit (%s)",
+			rec.MemoryRequestRecommendation, limitMem.String())
+	}
+
+	return nil
+}

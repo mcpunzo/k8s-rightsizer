@@ -80,6 +80,7 @@ func TestWorkloadResizer_ResizeWorkload(t *testing.T) {
 		{
 			name: "Success - Full Flow",
 			rec: &model.Recommendation{
+				Namespace:                   "default",
 				WorkloadName:                "test",
 				Container:                   "app",
 				CpuRequestRecommendation:    "200m",
@@ -107,27 +108,14 @@ func TestWorkloadResizer_ResizeWorkload(t *testing.T) {
 		},
 		{
 			name: "Rollback - Polling Failure (Crash Detected)",
-			rec:  &model.Recommendation{WorkloadName: "fail", Container: "app"},
+			rec:  &model.Recommendation{Namespace: "default", WorkloadName: "fail", Container: "app"},
 			ops: func() *mockWorkloadOps {
-				callCount := 0
 				return &mockWorkloadOps{
 					findFunc: func() (*Workload, error) {
 						return &Workload{Name: "fail", Namespace: "default", Template: baseTemplate.DeepCopy(), UpdateStrategy: "RollingUpdate"}, nil
 					},
 					resizeFunc: func() error { return nil },
 					statusFunc: func() (*WorkloadStatus, error) {
-						callCount++
-						if callCount == 1 { // Simulate first successful status check i.e. for the precheck phase
-							// First call returns normal status
-							return &WorkloadStatus{
-								ExpectedReplicas:   1,
-								UpdatedReplicas:    1,
-								AvailableReplicas:  1,
-								Generation:         1,
-								ObservedGeneration: 1,
-							}, nil
-						}
-						// Second call simulates a crash detected during polling, which should trigger rollback
 						return nil, errors.New("crash detected")
 					},
 					isPausedFunc: func() (bool, error) {
@@ -145,8 +133,12 @@ func TestWorkloadResizer_ResizeWorkload(t *testing.T) {
 			// Initialize the fake client with the PDBs defined in the test case
 			fakeClient := fake.NewSimpleClientset()
 			resizer := NewWorkloadResizer(fakeClient)
+			workload, err := tt.ops.FindWorkload(context.Background(), tt.rec)
+			if err != nil {
+				t.Fatalf("FindWorkload() error = %v", err)
+			}
 
-			err := resizer.ResizeWorkload(context.Background(), tt.rec, tt.ops)
+			err = resizer.ResizeWorkload(context.Background(), tt.rec, tt.ops, workload)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ResizeWorkload() error = %v, wantErr %v", err, tt.wantErr)
@@ -168,6 +160,7 @@ func TestWorkloadResizer_ResizeOnRecreateStrategy(t *testing.T) {
 		name             string
 		rec              *model.Recommendation
 		ops              *mockWorkloadOps
+		wantProceed      bool
 		wantErr          bool
 		errContains      string
 		resizeOnRecreate bool
@@ -175,6 +168,7 @@ func TestWorkloadResizer_ResizeOnRecreateStrategy(t *testing.T) {
 		{
 			name: "Resize skipped due to Recreate strategy",
 			rec: &model.Recommendation{
+				Namespace:                   "default",
 				WorkloadName:                "test",
 				Container:                   "app",
 				CpuRequestRecommendation:    "200m",
@@ -198,12 +192,14 @@ func TestWorkloadResizer_ResizeOnRecreateStrategy(t *testing.T) {
 					return false, nil
 				},
 			},
+			wantProceed: false,
 			wantErr:     true,
 			errContains: "skipping resize due to UpdateStrategy set on Recreate",
 		},
 		{
 			name: "Resize done as per configuration due to Recreate strategy",
 			rec: &model.Recommendation{
+				Namespace:                   "default",
 				WorkloadName:                "test",
 				Container:                   "app",
 				CpuRequestRecommendation:    "200m",
@@ -227,6 +223,7 @@ func TestWorkloadResizer_ResizeOnRecreateStrategy(t *testing.T) {
 					return false, nil
 				},
 			},
+			wantProceed:      true,
 			wantErr:          false,
 			errContains:      "",
 			resizeOnRecreate: true,
@@ -240,10 +237,17 @@ func TestWorkloadResizer_ResizeOnRecreateStrategy(t *testing.T) {
 
 			ctx := context.Background()
 			ctx = context.WithValue(ctx, "resizeOnRecreate", tt.resizeOnRecreate)
-			err := resizer.ResizeWorkload(ctx, tt.rec, tt.ops)
+			workload, err := tt.ops.FindWorkload(ctx, tt.rec)
+			if err != nil {
+				t.Fatalf("FindWorkload() error = %v", err)
+			}
+			proceed, err := resizer.ResizePrecheck(ctx, tt.rec, tt.ops, workload)
 
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ResizeWorkload() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ResizePrecheck() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if proceed != tt.wantProceed {
+				t.Errorf("ResizePrecheck() proceed = %v, want %v", proceed, tt.wantProceed)
 			}
 			if tt.wantErr && tt.errContains != "" {
 				if err == nil || !contains(err.Error(), tt.errContains) {
@@ -266,12 +270,14 @@ func TestWorkloadResizer_ResizeWorkload_With_PDB(t *testing.T) {
 		ops           *mockWorkloadOps
 		labelSelector *metav1.LabelSelector
 		initialObjs   []runtime.Object
+		wantProceed   bool
 		wantErr       bool
 		errContains   string
 	}{
 		{
 			name: "Success - Full Flow with PDB allowing disruption",
 			rec: &model.Recommendation{
+				Namespace:                   "default",
 				WorkloadName:                "test",
 				Container:                   "app",
 				CpuRequestRecommendation:    "200m",
@@ -307,11 +313,13 @@ func TestWorkloadResizer_ResizeWorkload_With_PDB(t *testing.T) {
 					},
 				},
 			}, // PDB allowing disruption in the cluster
-			wantErr: false,
+			wantProceed: true,
+			wantErr:     false,
 		},
 		{
 			name: "Success - Full Flow with PDB NOT allowing disruption",
 			rec: &model.Recommendation{
+				Namespace:                   "default",
 				WorkloadName:                "test",
 				Container:                   "app",
 				CpuRequestRecommendation:    "200m",
@@ -347,6 +355,7 @@ func TestWorkloadResizer_ResizeWorkload_With_PDB(t *testing.T) {
 					},
 				},
 			}, // PDB not allowing disruption in the cluster
+			wantProceed: false,
 			wantErr:     true,
 			errContains: "skipping resize due to PDB restrictions",
 		},
@@ -357,11 +366,18 @@ func TestWorkloadResizer_ResizeWorkload_With_PDB(t *testing.T) {
 			// Initialize the fake client with the PDBs defined in the test case
 			fakeClient := fake.NewSimpleClientset(tt.initialObjs...)
 			resizer := NewWorkloadResizer(fakeClient)
+			workload, err := tt.ops.FindWorkload(context.Background(), tt.rec)
+			if err != nil {
+				t.Fatalf("FindWorkload() error = %v", err)
+			}
 
-			err := resizer.ResizeWorkload(context.Background(), tt.rec, tt.ops)
+			proceed, err := resizer.ResizePrecheck(context.Background(), tt.rec, tt.ops, workload)
 
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ResizeWorkload() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ResizePrecheck() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if proceed != tt.wantProceed {
+				t.Errorf("ResizePrecheck() proceed = %v, want %v", proceed, tt.wantProceed)
 			}
 			if tt.wantErr && tt.errContains != "" {
 				if err == nil || !contains(err.Error(), tt.errContains) {
@@ -624,7 +640,7 @@ func TestWorkloadResizer_IsPDBTooRestrictive(t *testing.T) {
 	}
 }
 
-func TestResizeJob_TableDriven_FakeClient(t *testing.T) {
+func TestResizeJob(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name           string
@@ -660,7 +676,7 @@ func TestResizeJob_TableDriven_FakeClient(t *testing.T) {
 			recommendation: model.Recommendation{
 				WorkloadName: "missing-app", Namespace: "default", Kind: model.Deployment, Container: "container-1", CpuRequestRecommendation: "200m", MemoryRequestRecommendation: "256Mi",
 			},
-			expectedInRes: "[KO]",
+			expectedInRes: "[SKIP]",
 			expectStatus:  false,
 		},
 		{
@@ -696,10 +712,8 @@ func TestResizeJob_TableDriven_FakeClient(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// 2. Setup del Fake Client e del Resizer
 			client := fake.NewSimpleClientset(tc.initialObjects...)
 
-			// Inizializza il tuo resizer. Assicurati che passi il fake client ai gestori dei carichi.
 			r := NewWorkloadResizer(client)
 
 			recsChan := make(chan *model.Recommendation, 1)
@@ -716,22 +730,21 @@ func TestResizeJob_TableDriven_FakeClient(t *testing.T) {
 			r.ResizeJob(ctx, recsChan, resultsChan)
 			close(resultsChan)
 
-			// 4. Verifiche
 			res, ok := <-resultsChan
 			if !ok {
-				t.Fatalf("Nessun risultato ricevuto dal canale results")
+				t.Fatalf("No result received from the results channel")
 			}
 
 			if !strings.Contains(res, tc.expectedInRes) {
-				t.Errorf("Risultato errato. Atteso contenente: %s, Ottenuto: %s", tc.expectedInRes, res)
+				t.Errorf("Unexpected result. Expected to contain: %s, Got: %s", tc.expectedInRes, res)
 			}
 
-			// Verifica finale sul cluster fake se il test doveva avere successo
+			// Final verification on the fake cluster if the test was expected to succeed
 			if tc.expectStatus {
 				if tc.recommendation.Kind == model.Deployment {
 					_, err := client.AppsV1().Deployments(tc.recommendation.Namespace).Get(ctx, tc.recommendation.WorkloadName, metav1.GetOptions{})
 					if err != nil {
-						t.Errorf("Il deployment doveva esistere ma Get ha dato errore: %v", err)
+						t.Errorf("The deployment was expected to exist but Get returned an error: %v", err)
 					}
 				}
 			}

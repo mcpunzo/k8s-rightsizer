@@ -115,35 +115,61 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, recs <-chan *model.Reco
 			log.Printf("Context canceled, stopping ResizeJob")
 			return
 		default:
-			log.Printf("Processing recommendation for %s (%s) in namespace %s\n", rec.WorkloadName, rec.Kind, rec.Namespace)
+			log.Printf("Processing recommendation for %s\n", rec.ContainerID())
 
 			var err error
-			var workload WorkloadOps
+			var workloadSvc WorkloadOps
 			switch rec.Kind {
 			case model.Deployment:
-				workload = r.deploymentWorkload
+				workloadSvc = r.deploymentWorkload
 			case model.ReplicaSet:
-				workload = r.deploymentWorkload
+				workloadSvc = r.deploymentWorkload
 			case model.StatefulSet:
-				workload = r.statefulSetWorkload
+				workloadSvc = r.statefulSetWorkload
 			default:
 				err = fmt.Errorf("unsupported resource Kind for %s", rec.Kind)
 			}
 
 			if err != nil {
-				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", rec, err)
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
 				results <- errMsg
 				continue
 			}
 
-			err = r.ResizeWorkload(ctx, rec, workload)
+			//retrieve the current workload
+			log.Printf("Find Workload %s\n", rec.ContainerID())
+			workload, err := workloadSvc.FindWorkload(ctx, rec)
 			if err != nil {
-				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", rec, err)
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
 				results <- errMsg
 				continue
 			}
 
-			okMsg := fmt.Sprintf("[OK] Resource resized for %s", rec)
+			//validate the recommendations before trying to resize, to fail fast if there are any issues with the recs (e.g. invalid values, or values that would cause errors if applied)
+			log.Printf("Validate recommendations for %s\n", rec.ContainerID())
+			if err := workload.ValidateRecommendations(ctx, workload.Template, rec); err != nil {
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
+				results <- errMsg
+				continue
+			}
+
+			log.Printf("PreCheck assessment for %s\n", rec.ContainerID())
+			_, err = r.ResizePrecheck(ctx, rec, workloadSvc, workload)
+			if err != nil {
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
+				results <- errMsg
+				continue
+			}
+
+			log.Printf("Try resizing %s\n", rec.ContainerID())
+			err = r.ResizeWorkload(ctx, rec, workloadSvc, workload)
+			if err != nil {
+				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", rec.ContainerID(), err)
+				results <- errMsg
+				continue
+			}
+
+			okMsg := fmt.Sprintf("[OK] Resource resized for %s", rec.ContainerID())
 			results <- okMsg
 			time.Sleep(1 * time.Second) // Small delay between processing recommendations to avoid overwhelming the cluster
 		}
@@ -156,27 +182,13 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, recs <-chan *model.Reco
 // param ctx: The context for managing request deadlines and cancellation.
 // param rec: The Recommendation containing the new resource requests and target container information.
 // param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
+// param workload: The Workload struct representing the workload to be resized.
 // returns: An error if any issues occur during processing, resizing, or rollback operations.
-func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recommendation, w WorkloadOps) error {
-	//retrieve the current workload
-	workload, err := w.FindWorkload(ctx, rec)
-	if err != nil {
-		return err
-	}
-
-	tryResize, err := r.ResizePrecheck(ctx, rec, w, workload)
-	if err != nil {
-		return err
-	}
-
-	if !tryResize {
-		return nil
-	}
-
+func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recommendation, w WorkloadOps, workload *Workload) error {
 	// Deep copy in case of rollback
 	originalTemplate := workload.Template.DeepCopy()
 
-	err = w.ResizeWorkload(ctx, workload, rec)
+	err := w.ResizeWorkload(ctx, workload, rec)
 	if err != nil {
 		return fmt.Errorf("failed to update workload for %s: %v", rec, err)
 	}
@@ -191,12 +203,12 @@ func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recomme
 	err = wait.PollUntilContextTimeout(ctx, WorkloadCheckInterval, workloadCheckTimeout, false, checkStatusFunc)
 
 	if err != nil {
-		log.Printf("[!!!] ERROR: %v. Rollback Started %s/%s", err, workload.Namespace, workload.Name)
+		log.Printf("[!!!] ERROR: %v. Rollback Started for %s", err, rec.ContainerID())
 
 		// Create a new rollback recommendation based on the original template values (the backup)
 		rollbackRec := r.CreateRollbackRecommendation(rec, *originalTemplate)
 		if rollbackRec == nil {
-			return fmt.Errorf("impossible to create rollback recommendation for %s", workload.Name)
+			return fmt.Errorf("impossible to create rollback recommendation for %s", rec.ContainerID())
 		}
 
 		// Use a fresh context for rollback: the polling context may already be expired.
@@ -234,17 +246,19 @@ func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recomme
 // param workload: The Workload struct representing the workload to be resized.
 // returns: A boolean indicating whether the resize operation should proceed, and an error if any issues are detected that would prevent resizing.
 func (r *WorkloadResizer) ResizePrecheck(ctx context.Context, rec *model.Recommendation, w WorkloadOps, workload *Workload) (bool, error) {
+	log.Printf("Performing pre-checks before resizing for %s\n", rec.ContainerID())
 	if workload == nil {
-		return false, fmt.Errorf("workload not found for %s", rec)
+		log.Printf("Workload not found for %s\n", rec.ContainerID())
+		return false, fmt.Errorf("workload not found for %s", rec.ContainerID())
 	}
 
 	// check if the workload is in a paused state
 	pause, err := w.IsWorkloadInPausedState(ctx, workload)
 	if err != nil {
-		return false, fmt.Errorf("failed to check if workload is paused for %s: %v", rec, err)
+		return false, fmt.Errorf("failed to check as workload is paused for %s: %v", rec.ContainerID(), err)
 	}
 	if pause {
-		return false, fmt.Errorf("skipping resize as workload is paused for %s", rec)
+		return false, fmt.Errorf("skipping resize as workload is paused for %s", rec.ContainerID())
 	}
 
 	// Check any PDB restrictions before resizing
@@ -276,7 +290,7 @@ func (r *WorkloadResizer) ResizePrecheck(ctx context.Context, rec *model.Recomme
 		return false, fmt.Errorf("failed to get status for %s: %v", rec, err)
 	}
 	if status.AvailableReplicas < status.ExpectedReplicas {
-		return false, fmt.Errorf("skipping resize due to adegraded state observed for %s: %v", rec, err)
+		return false, fmt.Errorf("skipping resize due to a degraded state observed for %s: %v", rec, err)
 	}
 
 	if status.UpdatedReplicas < status.ExpectedReplicas {
