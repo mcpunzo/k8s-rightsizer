@@ -22,6 +22,8 @@ spec:
           - "{{ .Values.recommendations.mountPath }}/{{ .Values.recommendations.fileName }}"
           - "--workers"
           - "{{ .Values.settings.workers }}"
+          - "--resize-strategy"
+          - "{{ .Values.settings.resizeStrategy }}"
           {{- if .Values.settings.dryRun }}
           - "--dry-run"
           {{- end }}

@@ -1,10 +1,11 @@
-package resizeengine
+package k8s
 
 import (
 	"context"
 	"fmt"
 	"log"
 
+	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,6 +14,13 @@ import (
 // StatefulSetWorkload implements the WorkloadOps interface for Kubernetes StatefulSets.
 type StatefulSetWorkload struct {
 	client K8sClient
+}
+
+// NewStatefulSetWorkload creates a new instance of StatefulSetWorkload with the provided Kubernetes client.
+// param client: The Kubernetes client used to interact with the cluster.
+// returns: A pointer to a new instance of StatefulSetWorkload.
+func NewStatefulSetWorkload(client K8sClient) *StatefulSetWorkload {
+	return &StatefulSetWorkload{client: client}
 }
 
 // FindWorkload retrieves the current state of the StatefulSet based on the recommendation and constructs a Workload struct with the necessary information for resizing and status checking.
@@ -28,10 +36,10 @@ func (w *StatefulSetWorkload) FindWorkload(ctx context.Context, rec *model.Recom
 	}
 
 	return &Workload{
+		Id:               rec.WorkloadID(),
 		WorkloadType:     StatefulSet,
 		Namespace:        rec.Namespace,
 		Name:             rec.WorkloadName,
-		ContainerName:    rec.Container,
 		Template:         &statefulSet.Spec.Template,
 		LabelSelector:    statefulSet.Spec.Selector,
 		UpdateStrategy:   string(statefulSet.Spec.UpdateStrategy.Type),
@@ -42,21 +50,32 @@ func (w *StatefulSetWorkload) FindWorkload(ctx context.Context, rec *model.Recom
 // It returns an error if the container specified in the recommendation is not found in the StatefulSet or if the update operation fails.
 // param ctx: The context for managing request deadlines and cancellation.
 // param workload: The Workload struct representing the StatefulSet to be resized.
-// param rec: The Recommendation containing the new resource requests and target container information.
+// param recs: The slice of Recommendations containing the new resource requests and target container information.
 // returns: An error if the container is not found or if the update operation fails.
-func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Workload, rec *model.Recommendation) error {
+func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Workload, recs []*model.Recommendation) error {
 	log.Printf("Resizing Workload: %s/%s\n", workload.Namespace, workload.Name)
 
 	if workload.WorkloadType != StatefulSet {
 		return fmt.Errorf("invalid workload type: expected StatefulSet, got %s", workload.WorkloadType)
 	}
 
-	updated, err := ResizeContainer(ctx, workload.Template, rec)
-	if err != nil {
-		return fmt.Errorf("skipping resize for container %s in statefulset %s: %v", rec.Container, workload.Name, err)
+	errorResizingContainers := true
+	for _, rec := range recs {
+		updated, err := ResizeContainer(ctx, workload.Template, rec)
+		if err != nil {
+			log.Printf("skipping resize for container %s in statefulset %s: %v", rec.Container, workload.Name, err)
+		}
+		if !updated {
+			log.Printf("skipping resize for container %s in statefulset %s: container not found or resources already match recommendation", rec.Container, workload.Name)
+		}
+
+		if updated {
+			errorResizingContainers = false
+		}
 	}
-	if !updated {
-		return fmt.Errorf("skipping resize for container %s in statefulset %s: container not found or resources already match recommendation", rec.Container, workload.Name)
+
+	if errorResizingContainers {
+		return fmt.Errorf("failed to resize any containers for statefulset %s: all recommendations were invalid", workload.Name)
 	}
 
 	statefulSet, ok := workload.OriginalResource.(*appsv1.StatefulSet)
@@ -64,12 +83,12 @@ func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Work
 		return fmt.Errorf("failed to cast original resource to StatefulSet for %s", workload.Name)
 	}
 
-	if dryRun, ok := ctx.Value("dryRun").(bool); ok && dryRun {
+	if ctxkeys.DryRunFromContext(ctx) {
 		log.Printf("[Dry-Run] Would update statefulset %s/%s with new resources\n", workload.Namespace, workload.Name)
 		return nil
 	}
 
-	_, err = w.client.AppsV1().StatefulSets(rec.Namespace).Update(ctx, statefulSet, metav1.UpdateOptions{})
+	_, err := w.client.AppsV1().StatefulSets(workload.Namespace).Update(ctx, statefulSet, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update statefulset %s: %w", workload.Name, err)
 	}
@@ -111,10 +130,15 @@ func (w *StatefulSetWorkload) IsWorkloadInPausedState(ctx context.Context, workl
 		return false, err
 	}
 
+	replicas := int32(1) // Kubernetes default when spec.replicas is omitted
+	if sts.Spec.Replicas != nil {
+		replicas = *sts.Spec.Replicas
+	}
+
 	if sts.Spec.UpdateStrategy.RollingUpdate != nil &&
 		sts.Spec.UpdateStrategy.RollingUpdate.Partition != nil {
 		// if the partition is >= the replicas, no pods will be updated, so we can consider the workload as paused
-		return *sts.Spec.UpdateStrategy.RollingUpdate.Partition >= *sts.Spec.Replicas, nil
+		return *sts.Spec.UpdateStrategy.RollingUpdate.Partition >= replicas, nil
 	}
 
 	return false, nil

@@ -1,4 +1,4 @@
-package resizeengine
+package k8s
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type WorkloadStatus struct {
 // WorkloadOps defines the interface for operations on workloads (Deployment, StatefulSet, etc.) that the resizer will use to find, resize and check status.
 type WorkloadOps interface {
 	FindWorkload(ctx context.Context, rec *model.Recommendation) (*Workload, error)
-	ResizeWorkload(ctx context.Context, workload *Workload, rec *model.Recommendation) error
+	ResizeWorkload(ctx context.Context, workload *Workload, recs []*model.Recommendation) error
 	GetStatus(ctx context.Context, workload *Workload) (*WorkloadStatus, error)
 	IsWorkloadInPausedState(ctx context.Context, workload *Workload) (bool, error)
 }
@@ -38,10 +38,10 @@ const (
 
 // Workload is a generic struct that represents a workload (Deployment, StatefulSet, etc.) with the necessary information for resizing and status checking.
 type Workload struct {
+	Id               string
 	WorkloadType     WorkloadType
 	Namespace        string
 	Name             string
-	ContainerName    string
 	Template         *corev1.PodTemplateSpec
 	LabelSelector    *metav1.LabelSelector
 	UpdateStrategy   string
@@ -58,9 +58,15 @@ type Workload struct {
 func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, rec *model.Recommendation) (bool, error) {
 	for i, c := range podTemplate.Spec.Containers {
 		if c.Name == rec.Container {
+			recommendedCPU, err := resource.ParseQuantity(rec.CpuRequestRecommendation)
+			if err != nil {
+				return false, fmt.Errorf("invalid cpu request recommendation for container %s in workload %s: %v", c.Name, rec.WorkloadName, err)
+			}
 
-			recommendedCPU := resource.MustParse(rec.CpuRequestRecommendation)
-			recommendedMem := resource.MustParse(rec.MemoryRequestRecommendation)
+			recommendedMem, err := resource.ParseQuantity(rec.MemoryRequestRecommendation)
+			if err != nil {
+				return false, fmt.Errorf("invalid memory request recommendation for container %s in workload %s: %v", c.Name, rec.WorkloadName, err)
+			}
 
 			currentCPU := c.Resources.Requests.Cpu()
 			currentMem := c.Resources.Requests.Memory()
@@ -88,10 +94,9 @@ func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, r
 // It ensures that the recommended requests do not exceed the current limits set on the container.
 // Returns an error if the container is not found or if the recommendations are invalid.
 // param ctx: The context for managing request deadlines and cancellation.
-// param podTemplate: The PodTemplateSpec containing the container to be validated.
 // param rec: The Recommendation containing the new resource requests and target container information.
 // returns: An error if the container is not found or if the recommendations are invalid.
-func (w *Workload) ValidateRecommendations(ctx context.Context, podTemplate *corev1.PodTemplateSpec, rec *model.Recommendation) error {
+func (w *Workload) ValidateRecommendations(ctx context.Context, rec *model.Recommendation) error {
 	recCpu, err := resource.ParseQuantity(rec.CpuRequestRecommendation)
 	if err != nil {
 		return fmt.Errorf("invalid cpu request recommendation: %v", err)
@@ -102,9 +107,9 @@ func (w *Workload) ValidateRecommendations(ctx context.Context, podTemplate *cor
 	}
 
 	var container *corev1.Container
-	for i, c := range podTemplate.Spec.Containers {
+	for i, c := range w.Template.Spec.Containers {
 		if c.Name == rec.Container {
-			container = &podTemplate.Spec.Containers[i]
+			container = &w.Template.Spec.Containers[i]
 			break
 		}
 	}
@@ -124,6 +129,15 @@ func (w *Workload) ValidateRecommendations(ctx context.Context, podTemplate *cor
 	if limitMem != nil && !limitMem.IsZero() && recMem.Cmp(*limitMem) > 0 {
 		return fmt.Errorf("memory request (%s) cannot be greater than current limit (%s)",
 			rec.MemoryRequestRecommendation, limitMem.String())
+	}
+
+	requestCpu := container.Resources.Requests.Cpu()
+	requestMem := container.Resources.Requests.Memory()
+
+	// TODO: add limits management in the future, for now we just check that the new requests are different from the current ones to avoid unnecessary updates that would trigger rollouts without any actual change
+	if requestCpu != nil && !requestCpu.IsZero() && recCpu.Cmp(*requestCpu) == 0 &&
+		requestMem != nil && !requestMem.IsZero() && recMem.Cmp(*requestMem) == 0 {
+		return fmt.Errorf("requests for container %s in workload %s already match the recommendation", rec.Container, rec.WorkloadName)
 	}
 
 	return nil

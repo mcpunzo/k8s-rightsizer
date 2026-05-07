@@ -1,4 +1,4 @@
-package resizeengine
+package k8s
 
 import (
 	"context"
@@ -16,6 +16,8 @@ func TestResizeContainer(t *testing.T) {
 		podTemplate    *corev1.PodTemplateSpec
 		recommendation *model.Recommendation
 		wantUpdated    bool
+		wantErr        bool
+		errContains    string
 		expectedCPU    string
 		expectedMem    string
 	}{
@@ -31,6 +33,7 @@ func TestResizeContainer(t *testing.T) {
 			},
 			recommendation: &model.Recommendation{
 				Container:                   "app",
+				WorkloadName:                "test-workload",
 				CpuRequestRecommendation:    "500m",
 				MemoryRequestRecommendation: "256Mi",
 			},
@@ -49,10 +52,13 @@ func TestResizeContainer(t *testing.T) {
 			},
 			recommendation: &model.Recommendation{
 				Container:                   "wrong-container",
+				WorkloadName:                "test-workload",
 				CpuRequestRecommendation:    "100m",
 				MemoryRequestRecommendation: "128Mi",
 			},
 			wantUpdated: false,
+			wantErr:     true,
+			errContains: "Container wrong-container not found in  test-workload",
 		},
 		{
 			name: "Success - Verify resource values are overwritten",
@@ -73,12 +79,78 @@ func TestResizeContainer(t *testing.T) {
 			},
 			recommendation: &model.Recommendation{
 				Container:                   "app",
+				WorkloadName:                "test-workload",
 				CpuRequestRecommendation:    "200m",
 				MemoryRequestRecommendation: "512Mi",
 			},
 			wantUpdated: true,
 			expectedCPU: "200m",
 			expectedMem: "512Mi",
+		},
+		{
+			name: "Failure - Recommendation already matches requests",
+			podTemplate: &corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "app",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("200m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+			recommendation: &model.Recommendation{
+				Container:                   "app",
+				WorkloadName:                "test-workload",
+				CpuRequestRecommendation:    "200m",
+				MemoryRequestRecommendation: "512Mi",
+			},
+			wantUpdated: false,
+			wantErr:     true,
+			errContains: "Container app in workload test-workload: resources match recommendation",
+		},
+		{
+			name: "Failure - Invalid CPU recommendation",
+			podTemplate: &corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "app", Resources: corev1.ResourceRequirements{}},
+					},
+				},
+			},
+			recommendation: &model.Recommendation{
+				Container:                   "app",
+				WorkloadName:                "test-workload",
+				CpuRequestRecommendation:    "not-a-quantity",
+				MemoryRequestRecommendation: "256Mi",
+			},
+			wantUpdated: false,
+			wantErr:     true,
+			errContains: "invalid cpu request recommendation",
+		},
+		{
+			name: "Failure - Invalid memory recommendation",
+			podTemplate: &corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "app", Resources: corev1.ResourceRequirements{}},
+					},
+				},
+			},
+			recommendation: &model.Recommendation{
+				Container:                   "app",
+				WorkloadName:                "test-workload",
+				CpuRequestRecommendation:    "200m",
+				MemoryRequestRecommendation: "not-a-quantity",
+			},
+			wantUpdated: false,
+			wantErr:     true,
+			errContains: "invalid memory request recommendation",
 		},
 	}
 
@@ -87,8 +159,12 @@ func TestResizeContainer(t *testing.T) {
 			ctx := context.Background()
 			gotUpdated, err := ResizeContainer(ctx, tt.podTemplate, tt.recommendation)
 
-			if err != nil && gotUpdated {
-				t.Fatalf("ResizeContainer() error = %v", err)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ResizeContainer() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.wantErr && (err == nil || !strings.Contains(err.Error(), tt.errContains)) {
+				t.Fatalf("ResizeContainer() error = %v, want error containing %q", err, tt.errContains)
 			}
 
 			if gotUpdated != tt.wantUpdated {
@@ -147,7 +223,6 @@ func TestWorkload_ValidateRecommendations(t *testing.T) {
 	tests := []struct {
 		name        string
 		rec         *model.Recommendation
-		template    *corev1.PodTemplateSpec
 		wantErr     bool
 		errContains string
 	}{
@@ -159,7 +234,7 @@ func TestWorkload_ValidateRecommendations(t *testing.T) {
 				CpuRequestRecommendation:    "200m",
 				MemoryRequestRecommendation: "256Mi",
 			},
-			template: baseTemplate(),
+			wantErr: false,
 		},
 		{
 			name: "invalid cpu quantity",
@@ -169,7 +244,6 @@ func TestWorkload_ValidateRecommendations(t *testing.T) {
 				CpuRequestRecommendation:    "not-a-quantity",
 				MemoryRequestRecommendation: "256Mi",
 			},
-			template:    baseTemplate(),
 			wantErr:     true,
 			errContains: "invalid cpu request recommendation",
 		},
@@ -181,7 +255,6 @@ func TestWorkload_ValidateRecommendations(t *testing.T) {
 				CpuRequestRecommendation:    "200m",
 				MemoryRequestRecommendation: "not-a-quantity",
 			},
-			template:    baseTemplate(),
 			wantErr:     true,
 			errContains: "invalid memory request recommendation",
 		},
@@ -193,7 +266,6 @@ func TestWorkload_ValidateRecommendations(t *testing.T) {
 				CpuRequestRecommendation:    "200m",
 				MemoryRequestRecommendation: "256Mi",
 			},
-			template:    baseTemplate(),
 			wantErr:     true,
 			errContains: "container sidecar not found in workload test",
 		},
@@ -205,7 +277,6 @@ func TestWorkload_ValidateRecommendations(t *testing.T) {
 				CpuRequestRecommendation:    "600m",
 				MemoryRequestRecommendation: "256Mi",
 			},
-			template:    baseTemplate(),
 			wantErr:     true,
 			errContains: "cpu request (600m) cannot be greater than current limit (500m)",
 		},
@@ -217,16 +288,26 @@ func TestWorkload_ValidateRecommendations(t *testing.T) {
 				CpuRequestRecommendation:    "200m",
 				MemoryRequestRecommendation: "1Gi",
 			},
-			template:    baseTemplate(),
 			wantErr:     true,
 			errContains: "memory request (1Gi) cannot be greater than current limit (512Mi)",
 		},
+		{
+			name: "requests already match current requests",
+			rec: &model.Recommendation{
+				WorkloadName:                "test",
+				Container:                   "app",
+				CpuRequestRecommendation:    "100m",
+				MemoryRequestRecommendation: "128Mi",
+			},
+			wantErr:     true,
+			errContains: "requests for container app in workload test already match the recommendation",
+		},
 	}
 
-	workload := &Workload{}
+	workload := &Workload{Template: baseTemplate()}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := workload.ValidateRecommendations(context.Background(), tt.template, tt.rec)
+			err := workload.ValidateRecommendations(context.Background(), tt.rec)
 
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ValidateRecommendations() error = %v, wantErr %v", err, tt.wantErr)

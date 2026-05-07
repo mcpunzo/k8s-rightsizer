@@ -11,6 +11,7 @@ settings:
   resizeOnRecreate: false # Allow resizing if the workload update strategy is Recreate (default: false)
   dryRun: false # Enable dry-run mode (default: false)
   workers: 1 # Number of concurrent workers for processing recommendations (default: 1)
+  resizeStrategy: "container" # Resize strategy to use (default: container, options: container, workload)
 
 rbac:
   create: true

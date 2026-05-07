@@ -1,4 +1,4 @@
-package resizeengine
+package sharding
 
 import "hash/fnv"
 

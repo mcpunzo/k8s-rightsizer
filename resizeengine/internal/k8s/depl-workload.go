@@ -1,10 +1,11 @@
-package resizeengine
+package k8s
 
 import (
 	"context"
 	"fmt"
 	"log"
 
+	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,6 +14,13 @@ import (
 // DeploymentWorkload implements the WorkloadOps interface for Kubernetes Deployments.
 type DeploymentWorkload struct {
 	client K8sClient
+}
+
+// NewDeploymentWorkload creates a new instance of DeploymentWorkload with the provided Kubernetes client.
+// param client: The Kubernetes client used to interact with the cluster.
+// returns: A pointer to a new instance of DeploymentWorkload.
+func NewDeploymentWorkload(client K8sClient) *DeploymentWorkload {
+	return &DeploymentWorkload{client: client}
 }
 
 // FindWorkload retrieves the current state of the Deployment based on the recommendation and constructs a Workload struct with the necessary information for resizing and status checking.
@@ -28,10 +36,10 @@ func (w *DeploymentWorkload) FindWorkload(ctx context.Context, rec *model.Recomm
 	}
 
 	workload := &Workload{
+		Id:               rec.WorkloadID(),
 		WorkloadType:     Deployment,
 		Namespace:        rec.Namespace,
 		Name:             rec.WorkloadName,
-		ContainerName:    rec.Container,
 		Template:         &deployment.Spec.Template,
 		LabelSelector:    deployment.Spec.Selector,
 		UpdateStrategy:   string(deployment.Spec.Strategy.Type),
@@ -45,21 +53,32 @@ func (w *DeploymentWorkload) FindWorkload(ctx context.Context, rec *model.Recomm
 // It returns an error if the container specified in the recommendation is not found in the Deployment or if the update operation fails.
 // param ctx: The context for managing request deadlines and cancellation.
 // param workload: The Workload struct representing the Deployment to be resized.
-// param rec: The Recommendation containing the new resource requests and target container information.
+// param recs: The slice of Recommendations containing the new resource requests and target container information.
 // returns: An error if the container is not found or if the update operation fails.
-func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workload, rec *model.Recommendation) error {
+func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workload, recs []*model.Recommendation) error {
 	log.Printf("Resizing Workload: %s/%s\n", workload.Namespace, workload.Name)
 
 	if workload.WorkloadType != Deployment {
 		return fmt.Errorf("invalid workload type: expected Deployment, got %s", workload.WorkloadType)
 	}
 
-	updated, err := ResizeContainer(ctx, workload.Template, rec)
-	if err != nil {
-		return fmt.Errorf("skipping resize for container %s in deployment %s: %v", rec.Container, workload.Name, err)
+	errorResizingContainers := true
+	for _, rec := range recs {
+		updated, err := ResizeContainer(ctx, workload.Template, rec)
+		if err != nil {
+			log.Printf("skipping resize for container %s in deployment %s: %v", rec.Container, workload.Name, err)
+		}
+		if !updated {
+			log.Printf("skipping resize for container %s in deployment %s: container not found or resources already match recommendation", rec.Container, workload.Name)
+		}
+
+		if updated {
+			errorResizingContainers = false
+		}
 	}
-	if !updated {
-		return fmt.Errorf("skipping resize for container %s in deployment %s: container not found or resources already match recommendation", rec.Container, workload.Name)
+
+	if errorResizingContainers {
+		return fmt.Errorf("failed to resize any containers for deployment %s: all recommendations were invalid", workload.Name)
 	}
 
 	deployment, ok := workload.OriginalResource.(*appsv1.Deployment)
@@ -67,14 +86,12 @@ func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workl
 		return fmt.Errorf("failed to cast original resource to Deployment for %s", workload.Name)
 	}
 
-	dryRun := ctx.Value("dryRun")
-
-	if dryRun != nil && dryRun.(bool) {
+	if ctxkeys.DryRunFromContext(ctx) {
 		log.Printf("[Dry-Run] Would update deployment %s/%s with new resources\n", workload.Namespace, workload.Name)
 		return nil
 	}
 
-	_, err = w.client.AppsV1().Deployments(rec.Namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+	_, err := w.client.AppsV1().Deployments(workload.Namespace).Update(ctx, deployment, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update deployment %s: %w", workload.Name, err)
 	}

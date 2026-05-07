@@ -1,4 +1,4 @@
-package resizeengine
+package k8s
 
 import (
 	"context"
@@ -16,14 +16,14 @@ func TestDeploymentWorkload_FindWorkload(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name         string
-		rec          *model.Recommendation
+		recs         []*model.Recommendation
 		initialObjs  []runtime.Object
 		wantErr      bool
 		expectedType WorkloadType
 	}{
 		{
 			name: "Success - Found Deployment",
-			rec:  &model.Recommendation{Namespace: "default", WorkloadName: "web-app", Container: "nginx"},
+			recs: []*model.Recommendation{{Namespace: "default", WorkloadName: "web-app", Container: "nginx"}},
 			initialObjs: []runtime.Object{
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{Name: "web-app", Namespace: "default"},
@@ -35,7 +35,7 @@ func TestDeploymentWorkload_FindWorkload(t *testing.T) {
 		},
 		{
 			name:        "Failure - Deployment Not Found",
-			rec:         &model.Recommendation{Namespace: "default", WorkloadName: "missing"},
+			recs:        []*model.Recommendation{{Namespace: "default", WorkloadName: "missing"}},
 			initialObjs: []runtime.Object{},
 			wantErr:     true,
 		},
@@ -46,7 +46,7 @@ func TestDeploymentWorkload_FindWorkload(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(tt.initialObjs...)
 
 			w := &DeploymentWorkload{client: fakeClient}
-			got, err := w.FindWorkload(context.Background(), tt.rec)
+			got, err := w.FindWorkload(context.Background(), tt.recs[0])
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("FindWorkload() error = %v, wantErr %v", err, tt.wantErr)
@@ -56,8 +56,8 @@ func TestDeploymentWorkload_FindWorkload(t *testing.T) {
 				if got.WorkloadType != tt.expectedType {
 					t.Errorf("WorkloadType mismatch: got %v, want %v", got.WorkloadType, tt.expectedType)
 				}
-				if got.Name != tt.rec.WorkloadName {
-					t.Errorf("Name mismatch: got %s, want %s", got.Name, tt.rec.WorkloadName)
+				if got.Name != tt.recs[0].WorkloadName {
+					t.Errorf("Name mismatch: got %s, want %s", got.Name, tt.recs[0].WorkloadName)
 				}
 			}
 		})
@@ -66,10 +66,12 @@ func TestDeploymentWorkload_FindWorkload(t *testing.T) {
 
 func TestDeploymentWorkload_ResizeWorkload(t *testing.T) {
 	tests := []struct {
-		name       string
-		initialDep *appsv1.Deployment
-		rec        *model.Recommendation
-		wantErr    bool
+		name           string
+		initialDep     *appsv1.Deployment
+		recs           []*model.Recommendation
+		wantErr        bool
+		expectedCPU    map[string]string
+		expectedMemory map[string]string
 	}{
 		{
 			name: "Success - Valid Resize",
@@ -83,14 +85,94 @@ func TestDeploymentWorkload_ResizeWorkload(t *testing.T) {
 					},
 				},
 			},
-			rec: &model.Recommendation{
-				WorkloadName:                "api",
-				Namespace:                   "prod",
-				Container:                   "api-container",
-				CpuRequestRecommendation:    "250m",
-				MemoryRequestRecommendation: "512Mi",
+			recs: []*model.Recommendation{
+				{
+					WorkloadName:                "api",
+					Namespace:                   "prod",
+					Container:                   "api-container",
+					CpuRequestRecommendation:    "250m",
+					MemoryRequestRecommendation: "512Mi",
+				},
+			},
+			wantErr:        false,
+			expectedCPU:    map[string]string{"api-container": "250m"},
+			expectedMemory: map[string]string{"api-container": "512Mi"},
+		},
+		{
+			name: "Success - Multiple Container Recommendations",
+			initialDep: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "prod"},
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{Name: "api-container"},
+								{Name: "sidecar"},
+							},
+						},
+					},
+				},
+			},
+			recs: []*model.Recommendation{
+				{
+					WorkloadName:                "api",
+					Namespace:                   "prod",
+					Container:                   "api-container",
+					CpuRequestRecommendation:    "300m",
+					MemoryRequestRecommendation: "640Mi",
+				},
+				{
+					WorkloadName:                "api",
+					Namespace:                   "prod",
+					Container:                   "sidecar",
+					CpuRequestRecommendation:    "100m",
+					MemoryRequestRecommendation: "128Mi",
+				},
 			},
 			wantErr: false,
+			expectedCPU: map[string]string{
+				"api-container": "300m",
+				"sidecar":       "100m",
+			},
+			expectedMemory: map[string]string{
+				"api-container": "640Mi",
+				"sidecar":       "128Mi",
+			},
+		},
+		{
+			name: "Success - Multiple Recommendations With One Invalid Container",
+			initialDep: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "prod"},
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{Name: "api-container"},
+								{Name: "sidecar"},
+							},
+						},
+					},
+				},
+			},
+			recs: []*model.Recommendation{
+				{
+					WorkloadName:                "api",
+					Namespace:                   "prod",
+					Container:                   "api-container",
+					CpuRequestRecommendation:    "275m",
+					MemoryRequestRecommendation: "576Mi",
+				},
+				{
+					WorkloadName:                "api",
+					Namespace:                   "prod",
+					Container:                   "missing-container",
+					CpuRequestRecommendation:    "50m",
+					MemoryRequestRecommendation: "64Mi",
+				},
+			},
+			wantErr:        false,
+			expectedCPU:    map[string]string{"api-container": "275m"},
+			expectedMemory: map[string]string{"api-container": "576Mi"},
 		},
 		{
 			name: "Failure - Wrong Container Name",
@@ -98,10 +180,12 @@ func TestDeploymentWorkload_ResizeWorkload(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "prod"},
 				Spec:       appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api-container"}}}}},
 			},
-			rec: &model.Recommendation{
-				WorkloadName: "api",
-				Namespace:    "prod",
-				Container:    "invalid-container",
+			recs: []*model.Recommendation{
+				{
+					WorkloadName: "api",
+					Namespace:    "prod",
+					Container:    "invalid-container",
+				},
 			},
 			wantErr: true,
 		},
@@ -120,10 +204,26 @@ func TestDeploymentWorkload_ResizeWorkload(t *testing.T) {
 			}
 
 			w := &DeploymentWorkload{client: fakeClient}
-			err := w.ResizeWorkload(context.Background(), wObj, tt.rec)
+			err := w.ResizeWorkload(context.Background(), wObj, tt.recs)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ResizeWorkload() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			for _, c := range tt.initialDep.Spec.Template.Spec.Containers {
+				expectedCPU, ok := tt.expectedCPU[c.Name]
+				if ok && c.Resources.Requests.Cpu().String() != expectedCPU {
+					t.Errorf("container %s cpu request mismatch: got %s, want %s", c.Name, c.Resources.Requests.Cpu().String(), expectedCPU)
+				}
+
+				expectedMemory, ok := tt.expectedMemory[c.Name]
+				if ok && c.Resources.Requests.Memory().String() != expectedMemory {
+					t.Errorf("container %s memory request mismatch: got %s, want %s", c.Name, c.Resources.Requests.Memory().String(), expectedMemory)
+				}
 			}
 		})
 	}
