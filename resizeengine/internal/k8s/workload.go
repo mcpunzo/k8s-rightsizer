@@ -21,14 +21,6 @@ type WorkloadStatus struct {
 	Generation         int64
 }
 
-// WorkloadOps defines the interface for operations on workloads (Deployment, StatefulSet, etc.) that the resizer will use to find, resize and check status.
-type WorkloadOps interface {
-	FindWorkload(ctx context.Context, rec *model.Recommendation) (*Workload, error)
-	ResizeWorkload(ctx context.Context, workload *Workload, recs []*model.Recommendation) error
-	GetStatus(ctx context.Context, workload *Workload) (*WorkloadStatus, error)
-	IsWorkloadInPausedState(ctx context.Context, workload *Workload) (bool, error)
-}
-
 type WorkloadType string
 
 const (
@@ -52,11 +44,10 @@ type Workload struct {
 // It updates the resource requests for the specified container.
 // Returns true if the container was found and updated.
 // param ctx: The context for managing request deadlines and cancellation.
-// param podTemplate: The PodTemplateSpec to be modified.
 // param rec: The Recommendation containing the new resource requests and target container information.
 // returns: A boolean indicating whether the container was found and updated. An error is returned if the container is not found or if the resources already match the recommendation.
-func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, rec *model.Recommendation) (bool, error) {
-	for i, c := range podTemplate.Spec.Containers {
+func (w *Workload) ResizeContainer(ctx context.Context, rec *model.Recommendation) (bool, error) {
+	for i, c := range w.Template.Spec.Containers {
 		if c.Name == rec.Container {
 			recommendedCPU, err := resource.ParseQuantity(rec.CpuRequestRecommendation)
 			if err != nil {
@@ -77,7 +68,7 @@ func ResizeContainer(ctx context.Context, podTemplate *corev1.PodTemplateSpec, r
 				return false, errors.New(msg)
 			}
 
-			podTemplate.Spec.Containers[i].Resources.Requests = corev1.ResourceList{
+			w.Template.Spec.Containers[i].Resources.Requests = corev1.ResourceList{
 				corev1.ResourceCPU:    recommendedCPU,
 				corev1.ResourceMemory: recommendedMem,
 			}

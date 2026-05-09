@@ -2,6 +2,7 @@ package resizeengine
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 type mockBaseWorkloadOps struct {
@@ -41,220 +43,6 @@ func (m *mockBaseWorkloadOps) IsWorkloadInPausedState(_ context.Context, _ *k8s.
 		return false, nil
 	}
 	return m.isPausedFunc()
-}
-
-// TestCheckPodCriticalErrors tests the CheckPodCriticalErrors method with various pod states
-func TestCheckPodCriticalErrors(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		pods        []runtime.Object
-		namespace   string
-		labels      map[string]string
-		wantIsError bool
-		wantReason  string
-	}{
-		{
-			name:      "All pods running successfully",
-			namespace: "default",
-			labels:    map[string]string{"app": "test"},
-			pods: []runtime.Object{
-				&corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "pod-1",
-						Namespace: "default",
-						Labels:    map[string]string{"app": "test"},
-					},
-					Status: corev1.PodStatus{
-						Phase: corev1.PodRunning,
-						ContainerStatuses: []corev1.ContainerStatus{
-							{
-								Name: "container-1",
-								State: corev1.ContainerState{
-									Running: &corev1.ContainerStateRunning{},
-								},
-							},
-						},
-					},
-				},
-			},
-			wantIsError: false,
-			wantReason:  "",
-		},
-		{
-			name:      "Container in CrashLoopBackOff",
-			namespace: "default",
-			labels:    map[string]string{"app": "test"},
-			pods: []runtime.Object{
-				&corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "pod-crash",
-						Namespace: "default",
-						Labels:    map[string]string{"app": "test"},
-					},
-					Status: corev1.PodStatus{
-						ContainerStatuses: []corev1.ContainerStatus{
-							{
-								Name: "container-1",
-								State: corev1.ContainerState{
-									Waiting: &corev1.ContainerStateWaiting{
-										Reason: "CrashLoopBackOff",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			wantIsError: true,
-			wantReason:  "Container in error: CrashLoopBackOff",
-		},
-		{
-			name:      "Pod pending with unschedulable",
-			namespace: "default",
-			labels:    map[string]string{"app": "test"},
-			pods: []runtime.Object{
-				&corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "pod-pending",
-						Namespace: "default",
-						Labels:    map[string]string{"app": "test"},
-					},
-					Status: corev1.PodStatus{
-						Phase: corev1.PodPending,
-						Conditions: []corev1.PodCondition{
-							{
-								Type:    corev1.PodScheduled,
-								Status:  corev1.ConditionFalse,
-								Reason:  "Unschedulable",
-								Message: "Insufficient memory",
-							},
-						},
-					},
-				},
-			},
-			wantIsError: true,
-			wantReason:  "Insufficient resources in the cluster",
-		},
-		{
-			name:      "Container OOMKilled",
-			namespace: "default",
-			labels:    map[string]string{"app": "test"},
-			pods: []runtime.Object{
-				&corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "pod-oom",
-						Namespace: "default",
-						Labels:    map[string]string{"app": "test"},
-					},
-					Status: corev1.PodStatus{
-						ContainerStatuses: []corev1.ContainerStatus{
-							{
-								Name: "container-1",
-								State: corev1.ContainerState{
-									Terminated: &corev1.ContainerStateTerminated{
-										Reason: "OOMKilled",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			wantIsError: true,
-			wantReason:  "OOMKilled: Insufficient memory for startup",
-		},
-		{
-			name:      "ImagePullBackOff",
-			namespace: "default",
-			labels:    map[string]string{"app": "test"},
-			pods: []runtime.Object{
-				&corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "pod-image-fail",
-						Namespace: "default",
-						Labels:    map[string]string{"app": "test"},
-					},
-					Status: corev1.PodStatus{
-						ContainerStatuses: []corev1.ContainerStatus{
-							{
-								Name: "container-1",
-								State: corev1.ContainerState{
-									Waiting: &corev1.ContainerStateWaiting{
-										Reason: "ImagePullBackOff",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			wantIsError: true,
-			wantReason:  "Container in error: ImagePullBackOff",
-		},
-		{
-			name:      "Last termination state OOMKilled",
-			namespace: "default",
-			labels:    map[string]string{"app": "test"},
-			pods: []runtime.Object{
-				&corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "pod-restarted-oom",
-						Namespace: "default",
-						Labels:    map[string]string{"app": "test"},
-					},
-					Status: corev1.PodStatus{
-						ContainerStatuses: []corev1.ContainerStatus{
-							{
-								Name: "container-1",
-								LastTerminationState: corev1.ContainerState{
-									Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled"},
-								},
-							},
-						},
-					},
-				},
-			},
-			wantIsError: true,
-			wantReason:  "OOMKilled detected in the last restart: Insufficient memory for startup",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fakeClient := fake.NewSimpleClientset(tt.pods...)
-
-			baseResizer := &BaseResizer{
-				client: fakeClient,
-			}
-
-			workload := &k8s.Workload{
-				Namespace:     tt.namespace,
-				LabelSelector: &metav1.LabelSelector{MatchLabels: tt.labels},
-			}
-
-			isError, reason := baseResizer.CheckPodCriticalErrors(
-				context.Background(),
-				workload,
-			)
-
-			if isError != tt.wantIsError {
-				t.Errorf("CheckPodCriticalErrors() gotIsError = %v, want %v", isError, tt.wantIsError)
-			}
-
-			if tt.wantIsError && reason == "" {
-				t.Errorf("CheckPodCriticalErrors() expected reason, got empty string")
-			}
-
-			if tt.wantIsError && tt.wantReason != "" && !strings.Contains(reason, tt.wantReason) {
-				t.Errorf("CheckPodCriticalErrors() reason = %q, want to contain %q", reason, tt.wantReason)
-			}
-
-			if !tt.wantIsError && reason != "" {
-				t.Errorf("CheckPodCriticalErrors() expected no reason, got %q", reason)
-			}
-		})
-	}
 }
 
 // TestCreateRollbackRecommendation tests the CreateRollbackRecommendation method
@@ -660,6 +448,7 @@ func TestCheckWorkloadStatus(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(tt.pods...)
 			baseResizer := &BaseResizer{
 				client: fakeClient,
+				podSvc: k8s.NewPodService(fakeClient),
 			}
 
 			mockOps := &mockBaseWorkloadOps{getStatusFunc: tt.mockGetStatus}
@@ -802,7 +591,7 @@ func TestResizePrecheck(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(append(tt.pods, tt.pdbs...)...)
-			baseResizer := &BaseResizer{client: fakeClient}
+			baseResizer := &BaseResizer{client: fakeClient, podSvc: k8s.NewPodService(fakeClient)}
 
 			err := baseResizer.ResizePrecheck(context.Background(), tt.ops, tt.workload)
 
@@ -810,5 +599,168 @@ func TestResizePrecheck(t *testing.T) {
 				t.Errorf("ResizePrecheck() error = %v, wantErr %v", err != nil, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestNodeCheck(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		workload    *k8s.Workload
+		pods        []runtime.Object
+		nodes       []runtime.Object
+		reactor     func(client *fake.Clientset)
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "Failure - pending pods lookup fails",
+			workload: &k8s.Workload{
+				Namespace: "default",
+				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
+			},
+			reactor: func(client *fake.Clientset) {
+				client.PrependReactor("list", "pods", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("pods api down")
+				})
+			},
+			wantErr:     true,
+			errContains: "failed to find pending pods",
+		},
+		{
+			name: "Failure - namespace congestion",
+			workload: &k8s.Workload{
+				Namespace: "default",
+				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
+			},
+			pods: []runtime.Object{
+				mkPendingPod("p1", "default"),
+				mkPendingPod("p2", "default"),
+				mkPendingPod("p3", "default"),
+				mkPendingPod("p4", "default"),
+			},
+			wantErr:     true,
+			errContains: "namespace congestion",
+		},
+		{
+			name: "Failure - nodes lookup fails",
+			workload: &k8s.Workload{
+				Namespace: "default",
+				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
+			},
+			reactor: func(client *fake.Clientset) {
+				client.PrependReactor("list", "nodes", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("nodes api down")
+				})
+			},
+			wantErr:     true,
+			errContains: "failed to find nodes",
+		},
+		{
+			name: "Failure - cluster instability",
+			workload: &k8s.Workload{
+				Namespace: "default",
+				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
+			},
+			nodes: []runtime.Object{
+				mkNodeForCheck("n1", "amd64", true, false),
+				mkNodeForCheck("n2", "amd64", false, false),
+				mkNodeForCheck("n3", "amd64", false, false),
+				mkNodeForCheck("n4", "amd64", false, false),
+			},
+			wantErr:     true,
+			errContains: "cluster instability",
+		},
+		{
+			name: "Failure - no compatible architecture nodes",
+			workload: &k8s.Workload{
+				Namespace: "default",
+				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
+			},
+			nodes: []runtime.Object{
+				mkNodeForCheck("n1", "arm64", true, false),
+				mkNodeForCheck("n2", "arm64", true, false),
+				mkNodeForCheck("n3", "arm64", true, false),
+				mkNodeForCheck("n4", "arm64", true, false),
+			},
+			wantErr:     true,
+			errContains: "no compatible architecture nodes available",
+		},
+		{
+			name: "Success - checks pass",
+			workload: &k8s.Workload{
+				Namespace: "default",
+				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
+			},
+			pods: []runtime.Object{
+				mkPendingPod("p1", "default"),
+			},
+			nodes: []runtime.Object{
+				mkNodeForCheck("n1", "amd64", true, false),
+				mkNodeForCheck("n2", "amd64", true, false),
+				mkNodeForCheck("n3", "arm64", true, false),
+				mkNodeForCheck("n4", "amd64", false, false),
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			objs := append([]runtime.Object{}, tt.pods...)
+			objs = append(objs, tt.nodes...)
+			fakeClient := fake.NewSimpleClientset(objs...)
+			if tt.reactor != nil {
+				tt.reactor(fakeClient)
+			}
+
+			baseResizer := &BaseResizer{
+				client:  fakeClient,
+				podSvc:  k8s.NewPodService(fakeClient),
+				nodeSvc: k8s.NewNodeService(fakeClient),
+			}
+
+			err := baseResizer.NodeCheck(context.Background(), tt.workload)
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("NodeCheck() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.errContains != "" && (err == nil || !strings.Contains(err.Error(), tt.errContains)) {
+				t.Fatalf("NodeCheck() error = %v, want to contain %q", err, tt.errContains)
+			}
+		})
+	}
+}
+
+func mkPendingPod(name, namespace string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Status:     corev1.PodStatus{Phase: corev1.PodPending},
+	}
+}
+
+func mkNodeForCheck(name, arch string, ready bool, unschedulable bool) *corev1.Node {
+	readyStatus := corev1.ConditionFalse
+	if ready {
+		readyStatus = corev1.ConditionTrue
+	}
+
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				"kubernetes.io/arch":               arch,
+				"node.kubernetes.io/instance-type": "c5.x86",
+			},
+		},
+		Spec: corev1.NodeSpec{Unschedulable: unschedulable},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{
+			{Type: corev1.NodeReady, Status: readyStatus},
+		}},
 	}
 }

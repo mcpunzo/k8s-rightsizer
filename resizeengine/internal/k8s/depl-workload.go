@@ -64,7 +64,7 @@ func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workl
 
 	errorResizingContainers := true
 	for _, rec := range recs {
-		updated, err := ResizeContainer(ctx, workload.Template, rec)
+		updated, err := workload.ResizeContainer(ctx, rec)
 		if err != nil {
 			log.Printf("skipping resize for container %s in deployment %s: %v", rec.Container, workload.Name, err)
 		}

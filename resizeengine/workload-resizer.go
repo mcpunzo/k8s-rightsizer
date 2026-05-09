@@ -25,6 +25,8 @@ func NewWorkloadResizer(client k8s.K8sClient) *WorkloadResizer {
 			client:              client,
 			deploymentWorkload:  k8s.NewDeploymentWorkload(client),
 			statefulSetWorkload: k8s.NewStatefulSetWorkload(client),
+			podSvc:              k8s.NewPodService(client),
+			nodeSvc:             k8s.NewNodeService(client),
 		},
 	}
 }
@@ -40,7 +42,7 @@ func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendatio
 	//1. arrange recommendations by workload
 	workloadRecs := r.arrangeRecsByWorkload(recs)
 
-	resizeJobs := make(chan []*model.Recommendation, len(workloadRecs))
+	resizeJobs := make(chan []*model.Recommendation, numberOfWorkers) // Buffered channel to hold resize jobs
 	results := make(chan string, len(workloadRecs))
 
 	var wg sync.WaitGroup
@@ -121,6 +123,14 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 				continue
 			}
 
+			log.Printf("Cluster nodes assessment for %s\n", workload.Id)
+			err = r.NodeCheck(ctx, workload)
+			if err != nil {
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", workload.Id, err)
+				results <- errMsg
+				continue
+			}
+
 			log.Printf("Try resizing %s\n", workload.Id)
 			err = r.ApplyResize(ctx, newRecs, workloadSvc, workload)
 			if err != nil {
@@ -132,7 +142,7 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			okMsg := fmt.Sprintf("[OK] Resource resized for %s", workload.Id)
 			results <- okMsg
 			select {
-			case <-time.After(1 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
+			case <-time.After(30 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
 			case <-ctx.Done():
 				log.Printf("Context canceled during delay, stopping ResizeJob")
 				return

@@ -61,7 +61,7 @@ func (w *StatefulSetWorkload) ResizeWorkload(ctx context.Context, workload *Work
 
 	errorResizingContainers := true
 	for _, rec := range recs {
-		updated, err := ResizeContainer(ctx, workload.Template, rec)
+		updated, err := workload.ResizeContainer(ctx, rec)
 		if err != nil {
 			log.Printf("skipping resize for container %s in statefulset %s: %v", rec.Container, workload.Name, err)
 		}

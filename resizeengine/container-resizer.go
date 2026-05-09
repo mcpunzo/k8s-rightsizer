@@ -26,6 +26,8 @@ func NewContainerResizer(client k8s.K8sClient) *ContainerResizer {
 			client:              client,
 			deploymentWorkload:  k8s.NewDeploymentWorkload(client),
 			statefulSetWorkload: k8s.NewStatefulSetWorkload(client),
+			podSvc:              k8s.NewPodService(client),
+			nodeSvc:             k8s.NewNodeService(client),
 		},
 	}
 }
@@ -129,6 +131,14 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 				continue
 			}
 
+			log.Printf("Cluster nodes assessment for %s\n", rec.ContainerID())
+			err = r.NodeCheck(ctx, workload)
+			if err != nil {
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
+				results <- errMsg
+				continue
+			}
+
 			log.Printf("Try resizing %s\n", rec.ContainerID())
 			err = r.ApplyResize(ctx, []*model.Recommendation{rec}, workloadSvc, workload)
 			if err != nil {
@@ -141,7 +151,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			results <- okMsg
 
 			select {
-			case <-time.After(1 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
+			case <-time.After(30 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
 			case <-ctx.Done():
 				log.Printf("Context canceled during delay, stopping ResizeJob")
 				return

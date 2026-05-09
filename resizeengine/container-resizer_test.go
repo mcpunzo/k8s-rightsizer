@@ -522,7 +522,7 @@ func TestContainerResizer_CheckPodCriticalErrors(t *testing.T) {
 				LabelSelector: &metav1.LabelSelector{MatchLabels: appLabels},
 			}
 
-			isError, reason := r.CheckPodCriticalErrors(context.Background(), workload)
+			isError, reason := r.podSvc.CheckPodCriticalErrors(context.Background(), workload)
 
 			if isError != tt.wantIsError {
 				t.Errorf("CheckPodCriticalErrors() isError = %v, want %v", isError, tt.wantIsError)
@@ -763,6 +763,16 @@ func TestContainerResizer_ResizeJob(t *testing.T) {
 						},
 					},
 				},
+				&corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node-1",
+						Labels: map[string]string{
+							"kubernetes.io/arch":               "amd64",
+							"node.kubernetes.io/instance-type": "c5.x86",
+						},
+					},
+					Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+				},
 			},
 			rec: model.Recommendation{
 				WorkloadName: "api", Namespace: "default", Kind: model.Deployment,
@@ -781,6 +791,16 @@ func TestContainerResizer_ResizeJob(t *testing.T) {
 							Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "postgres"}}},
 						},
 					},
+				},
+				&corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node-1",
+						Labels: map[string]string{
+							"kubernetes.io/arch":               "amd64",
+							"node.kubernetes.io/instance-type": "c5.x86",
+						},
+					},
+					Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
 				},
 			},
 			rec: model.Recommendation{

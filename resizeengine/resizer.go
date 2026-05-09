@@ -27,6 +27,8 @@ type BaseResizer struct {
 	client              k8s.K8sClient
 	deploymentWorkload  *k8s.DeploymentWorkload
 	statefulSetWorkload *k8s.StatefulSetWorkload
+	podSvc              *k8s.PodService
+	nodeSvc             *k8s.NodeService
 }
 
 // ResizePrecheck performs pre-checks before resizing the workload, such as checking for PDB restrictions and UpdateStrategy settings.
@@ -36,7 +38,7 @@ type BaseResizer struct {
 // param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
 // param workload: The Workload struct representing the workload to be resized.
 // returns: An error if any issues are detected that would prevent resizing.
-func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadOps, workload *k8s.Workload) error {
+func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadService, workload *k8s.Workload) error {
 	log.Print("Performing ResizePrecheck")
 	if workload == nil {
 		return fmt.Errorf("workload cannot be nil")
@@ -88,9 +90,45 @@ func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadOps, wor
 		return fmt.Errorf("skipping resize as we are in the middle of a rollout for %s", workload.Id)
 	}
 
-	isThereAnError, reason := r.CheckPodCriticalErrors(ctx, workload)
+	isThereAnError, reason := r.podSvc.CheckPodCriticalErrors(ctx, workload)
 	if isThereAnError {
 		return fmt.Errorf("skipping resize due to critical error detected in pods for %s: %s", workload.Id, reason)
+	}
+
+	return nil
+}
+
+// NodeCheck performs checks on the cluster nodes to ensure that there are enough compatible and ready nodes to accommodate the resized pods after the resize operation.
+// It checks for namespace congestion by counting the number of pending pods in the namespace and returns an error if there are too many pending pods, which may indicate a cluster-wide scheduling issue. It also checks for architectural constraints by counting the number of compatible and ready nodes based on the specified architecture and returns an error if there are not enough compatible or ready nodes to accommodate the resized pods.
+// param ctx: The context for managing request deadlines and cancellation.
+// param workload: The Workload struct representing the workload to be resized.
+// returns: An error if any issues are detected that would prevent resizing.
+func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) error {
+	// 1. Check namespace congestion: if there are already too many pending pods in the namespace, it may indicate a cluster-wide scheduling issue that would prevent our pods from starting up successfully after the resize. In that case, we should fail fast and avoid triggering a rollout that is likely to fail.
+	podList, err := r.podSvc.Find(ctx, workload.Namespace, "status.phase=Pending")
+	if err != nil {
+		return fmt.Errorf("failed to find pending pods in namespace %s: %v", workload.Namespace, err)
+	}
+
+	if len(podList) > 3 {
+		return fmt.Errorf("namespace congestion: %d pods already pending", len(podList))
+	}
+
+	//2. architectural constraints: if the workload is currently running on nodes with specific architectural constraints (e.g., GPU, ARM), we should check if there are enough available nodes with those constraints to accommodate the resized pods. If not, we should fail fast to avoid triggering a rollout that is likely to fail due to scheduling issues.
+	architecture := workload.Template.Spec.NodeSelector["kubernetes.io/arch"]
+	nodeStats, err := r.nodeSvc.Find(ctx, architecture)
+	if err != nil {
+		return fmt.Errorf("failed to find nodes for architecture %s: %v", architecture, err)
+	}
+
+	// if less than 50% of the total nodes are Ready, the cluster is unstable
+	if nodeStats.ReadyNodesCount < (nodeStats.NumberOfNodes / 2) {
+		return fmt.Errorf("cluster instability: more than 50%% of nodes are NotReady")
+	}
+
+	// if there are no nodes compatible with the pod's architecture, the rollout will fail due to scheduling issues, so we should fail fast with a clear message about the potential architecture mismatch (e.g., Graviton vs x86).
+	if nodeStats.CompatibleNodesCount == 0 {
+		return fmt.Errorf("no compatible architecture nodes available (possible Graviton/x86 mismatch)")
 	}
 
 	return nil
@@ -128,7 +166,7 @@ func (r *BaseResizer) CreateRollbackRecommendation(recs []*model.Recommendation,
 // param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
 // param workload: The Workload struct representing the workload.
 // returns: A function that can be used with wait.PollUntilContextTimeout to check the status of the workload.
-func (r *BaseResizer) CheckWorkloadStatus(ctx context.Context, w k8s.WorkloadOps, workload *k8s.Workload) func(context.Context) (bool, error) {
+func (r *BaseResizer) CheckWorkloadStatus(ctx context.Context, w k8s.WorkloadService, workload *k8s.Workload) func(context.Context) (bool, error) {
 	return func(ctx context.Context) (bool, error) {
 		// 1. retrieve the current status of the workload
 		status, err := w.GetStatus(ctx, workload)
@@ -138,7 +176,7 @@ func (r *BaseResizer) CheckWorkloadStatus(ctx context.Context, w k8s.WorkloadOps
 
 		// 2. Check for critical errors (OOM, CrashLoop, etc.)
 		// The CheckPodCriticalErrors function is already generic because it accepts the LabelSelector
-		isError, reason := r.CheckPodCriticalErrors(ctx, workload)
+		isError, reason := r.podSvc.CheckPodCriticalErrors(ctx, workload)
 		if isError {
 			return false, fmt.Errorf("fail detected in workload %s: %s", workload.Id, reason)
 		}
@@ -154,62 +192,6 @@ func (r *BaseResizer) CheckWorkloadStatus(ctx context.Context, w k8s.WorkloadOps
 		log.Printf("[%s] Rollout in progress... (%d/%d ready)", workload.Id, status.AvailableReplicas, status.ExpectedReplicas)
 		return false, nil
 	}
-}
-
-// CheckPodCriticalErrors checks for critical errors in the Pods associated with the workload, such as scheduling issues, CrashLoopBackOff, OOMKilled, etc.
-// It returns a boolean indicating whether a critical error was detected and a string with the reason for the error if applicable.
-// param ctx: The context for managing request deadlines and cancellation.
-// param client: The Kubernetes client used to interact with the cluster.
-// param namespace: The namespace of the workload.
-// returns: A boolean indicating whether a critical error was detected, and a string with the reason for the error if applicable.
-func (r *BaseResizer) CheckPodCriticalErrors(ctx context.Context, workload *k8s.Workload) (bool, string) {
-	selector, err := metav1.LabelSelectorAsSelector(workload.LabelSelector)
-	if err != nil {
-		return true, fmt.Sprintf("failed to create label selector for %s: %v. Skipping critical error check, but be aware of potential undetected issues.\n", workload.Id, err)
-	}
-
-	pods, err := r.client.CoreV1().Pods(workload.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector.String(),
-	})
-
-	if err != nil {
-		return true, fmt.Sprintf("failed to list pods for %s: %v. Skipping critical error check, but be aware of potential undetected issues.\n", workload.Id, err)
-	}
-
-	for _, p := range pods.Items {
-		// 1. Check if the Pod is stuck in scheduling (Cluster full or insufficient resources)
-		if p.Status.Phase == v1.PodPending {
-			for _, cond := range p.Status.Conditions {
-				if cond.Type == v1.PodScheduled && cond.Status == v1.ConditionFalse && cond.Reason == "Unschedulable" {
-					return true, fmt.Sprintf("Insufficient resources in the cluster: %s", cond.Message)
-				}
-			}
-		}
-
-		// 2. Check the status of individual containers
-		for _, cs := range p.Status.ContainerStatuses {
-			// Waiting cases
-			if cs.State.Waiting != nil {
-				reason := cs.State.Waiting.Reason
-				if reason == "CrashLoopBackOff" || reason == "ImagePullBackOff" || reason == "CreateContainerConfigError" {
-					return true, fmt.Sprintf("Container in error: %s", reason)
-				}
-			}
-
-			// Terminated cases
-			if cs.State.Terminated != nil {
-				if cs.State.Terminated.Reason == "OOMKilled" {
-					return true, "OOMKilled: Insufficient memory for startup"
-				}
-			}
-
-			// Check the last termination state (if it crashed recently)
-			if cs.LastTerminationState.Terminated != nil && cs.LastTerminationState.Terminated.Reason == "OOMKilled" {
-				return true, "OOMKilled detected in the last restart: Insufficient memory for startup"
-			}
-		}
-	}
-	return false, ""
 }
 
 // IsPDBRestrictions checks if there are any Pod Disruption Budget restrictions that would prevent the workload from being safely resized.
@@ -271,7 +253,7 @@ func (r *BaseResizer) IsPDBTooRestrictive(ctx context.Context, namespace string,
 // It supports Deployment, ReplicaSet, and StatefulSet kinds, and returns an error for unsupported kinds.
 // param kind: The Kind of the workload (e.g., Deployment, ReplicaSet, StatefulSet).
 // returns: An instance of WorkloadOps corresponding to the workload kind, or an error if the kind is unsupported.
-func (r *BaseResizer) lookupWorkloadOps(kind model.Kind) (k8s.WorkloadOps, error) {
+func (r *BaseResizer) lookupWorkloadOps(kind model.Kind) (k8s.WorkloadService, error) {
 	switch kind {
 	case model.Deployment:
 		return r.deploymentWorkload, nil
@@ -292,7 +274,7 @@ func (r *BaseResizer) lookupWorkloadOps(kind model.Kind) (k8s.WorkloadOps, error
 // param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
 // param workload: The Workload struct representing the workload to be resized.
 // returns: An error if any issues occur during processing, resizing, or rollback operations.
-func (r *BaseResizer) ApplyResize(ctx context.Context, recs []*model.Recommendation, w k8s.WorkloadOps, workload *k8s.Workload) error {
+func (r *BaseResizer) ApplyResize(ctx context.Context, recs []*model.Recommendation, w k8s.WorkloadService, workload *k8s.Workload) error {
 	if len(recs) == 0 {
 		return fmt.Errorf("failed to update workload: no recommendations provided")
 	}

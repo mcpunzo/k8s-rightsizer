@@ -55,6 +55,22 @@ func containerWithLimits(name, cpuReq, memReq, cpuLim, memLim string) corev1.Con
 	}
 }
 
+func wrReadyNode(name, arch string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				"kubernetes.io/arch":               arch,
+				"node.kubernetes.io/instance-type": "c5.x86",
+			},
+		},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{
+			Type:   corev1.NodeReady,
+			Status: corev1.ConditionTrue,
+		}}},
+	}
+}
+
 // --- TestWorkloadResizer_ArrangeRecsByWorkload ---
 
 func TestWorkloadResizer_ArrangeRecsByWorkload(t *testing.T) {
@@ -256,6 +272,7 @@ func TestWorkloadResizer_ResizeJob(t *testing.T) {
 				wrDeployment("api", "prod", []corev1.Container{
 					containerWithLimits("app", "100m", "128Mi", "1", "1Gi"),
 				}),
+				wrReadyNode("node-1", "amd64"),
 			},
 			wantResults: []string{"[OK]"},
 		},
@@ -301,6 +318,7 @@ func TestWorkloadResizer_ResizeJob(t *testing.T) {
 			k8sObjs: []runtime.Object{
 				wrDeployment("api", "default", []corev1.Container{containerWithLimits("app", "100m", "128Mi", "1", "1Gi")}),
 				wrDeployment("worker", "default", []corev1.Container{containerWithLimits("job", "100m", "128Mi", "1", "1Gi")}),
+				wrReadyNode("node-1", "amd64"),
 			},
 			wantResults: []string{"[OK]", "[OK]"},
 		},
