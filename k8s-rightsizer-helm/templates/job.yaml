@@ -30,6 +30,9 @@ spec:
           {{- if .Values.settings.resizeOnRecreate }}
           - "--resize-on-recreate"
           {{- end }}
+          {{- if .Values.settings.useLimits }}
+          - "--use-limits"
+          {{- end }}
         volumeMounts:
         - name: recommendations-storage
           mountPath: {{ .Values.recommendations.mountPath }}

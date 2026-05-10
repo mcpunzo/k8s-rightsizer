@@ -13,6 +13,7 @@ RESIZE_ON_RECREATE ?= false
 DRY_RUN ?= false
 WORKERS ?= 1
 RESIZE_STRATEGY ?= container
+USE_LIMITS ?= false
 
 # check for valid environment
 SUPPORTED_ENVS := local dev
@@ -78,7 +79,8 @@ endif
 		--set settings.dryRun=$(DRY_RUN) \
 		--set settings.resizeOnRecreate=$(RESIZE_ON_RECREATE) \
 		--set settings.workers="$(WORKERS)" \
-		--set settings.resizeStrategy=$(RESIZE_STRATEGY)
+		--set settings.resizeStrategy=$(RESIZE_STRATEGY) \
+		--set settings.useLimits=$(USE_LIMITS)
 
 .PHONY: undeploy
 undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))

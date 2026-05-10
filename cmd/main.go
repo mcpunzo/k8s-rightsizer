@@ -25,6 +25,7 @@ func main() {
 	resizeOnRecreate := flag.Bool("resize-on-recreate", false, "Allow resizing if the workload update strategy is Recreate (default: false)")
 	numberOfWorkers := flag.Int("workers", 1, "Number of concurrent workers for processing recommendations")
 	resizeStrategy := flag.String("resize-strategy", "container", "Resize strategy to use (default: container, options: container, workload)")
+	useLimits := flag.Bool("use-limits", false, "Use resource limits instead of requests for resizing (default: false)")
 	flag.Parse()
 
 	checkRequiredFlags(*recFile, *resizeStrategy, *numberOfWorkers)
@@ -34,6 +35,7 @@ func main() {
 	log.Printf("Resize on Recreate: %v", *resizeOnRecreate)
 	log.Printf("Number of workers: %v", *numberOfWorkers)
 	log.Printf("Resize strategy: %v", *resizeStrategy)
+	log.Printf("Use limits: %v", *useLimits)
 
 	fileInfo, err := os.Stat(*recFile)
 	if err != nil {
@@ -76,7 +78,7 @@ func main() {
 	ctx := ctxkeys.WithDryRun(context.Background(), *dryRun)
 	ctx = ctxkeys.WithResizeOnRecreate(ctx, *resizeOnRecreate)
 	ctx = ctxkeys.WithNumberOfWorkers(ctx, *numberOfWorkers)
-
+	ctx = ctxkeys.WithUseLimits(ctx, *useLimits)
 	if err := rightsizer.Rightsize(ctx, recs); err != nil {
 		log.Printf("Resize process completed with some issues: %v", err)
 	}

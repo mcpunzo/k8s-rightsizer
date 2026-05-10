@@ -106,6 +106,7 @@ Below is a list of all the parameters of the k8s-rightsizer. You can use them by
 | DRY_RUN              | true \| false | false     | Plan the execution without resizing containers                   |
 | WORKERS              |               | 1         | Number of concurrent resizing workers¹                           |
 | RESIZE_STRATEGY      | container\|workload | container | container strategy applies recommendations container by container. workload strategy applies recommendations per workload, i.e. multiple recommendations for the same workload are applied at once²          |
+| USE_LIMITS              | true \| false | false     | Set cpu and memory limits on workload containers 
 
 
 ¹ Using concurrent workers can be helpful for speeding up work. Considerations:
@@ -222,3 +223,4 @@ Recommendation file (.xslx, .xsl) must contain the following columns (order is i
 **Note** Empty values for recommended columns are not allowed. Therefore set 
   - **CPU Limit Recommended** to 0m and 
   - **Memory Limit Recommended** to 0Mi
+  - If USE_LIMITS is set to true, all limits must be specified and they have to be greater or equal than the related request (e.g. cpu request <= cpu limit and mem request <= mem limit) 

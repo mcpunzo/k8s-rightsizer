@@ -12,6 +12,7 @@ settings:
   dryRun: false # Enable dry-run mode (default: false)
   workers: 1 # Number of concurrent workers for processing recommendations (default: 1)
   resizeStrategy: "container" # Resize strategy to use (default: container, options: container, workload)
+  useLimits: false # Use resource limits to set limits on containers (default: false)
 
 rbac:
   create: true
