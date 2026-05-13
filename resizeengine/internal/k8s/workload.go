@@ -64,9 +64,21 @@ func (w *Workload) ResizeContainer(ctx context.Context, rec *model.Recommendatio
 
 			currentCPU := c.Resources.Requests.Cpu()
 			currentMem := c.Resources.Requests.Memory()
+			useLimits := ctxkeys.UseLimitsFromContext(ctx)
 
-			if currentCPU.Equal(recommendationQuantities.CpuRequestRecommendation) && currentMem.Equal(recommendationQuantities.MemoryRequestRecommendation) {
+			requestsMatch := currentCPU.Equal(recommendationQuantities.CpuRequestRecommendation) && currentMem.Equal(recommendationQuantities.MemoryRequestRecommendation)
+			limitsMatch := false
+			if useLimits {
+				currentCPULimit := c.Resources.Limits.Cpu()
+				currentMemLimit := c.Resources.Limits.Memory()
+				limitsMatch = currentCPULimit.Equal(recommendationQuantities.CpuLimitRecommendation) && currentMemLimit.Equal(recommendationQuantities.MemoryLimitRecommendation)
+			}
+
+			if requestsMatch && (!useLimits || limitsMatch) {
 				msg := fmt.Sprintf("Container %s in workload %s: resources match recommendation", c.Name, rec.WorkloadName)
+				if useLimits {
+					msg = fmt.Sprintf("Container %s in workload %s: resource requests and limits already match the recommendation", c.Name, rec.WorkloadName)
+				}
 				log.Print(msg)
 				return false, errors.New(msg)
 			}

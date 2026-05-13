@@ -13,17 +13,21 @@ import (
 
 func TestResizeContainer(t *testing.T) {
 	tests := []struct {
-		name           string
-		podTemplate    *corev1.PodTemplateSpec
-		recommendation *model.Recommendation
-		wantUpdated    bool
-		wantErr        bool
-		errContains    string
-		expectedCPU    string
-		expectedMem    string
+		name             string
+		ctx              context.Context
+		podTemplate      *corev1.PodTemplateSpec
+		recommendation   *model.Recommendation
+		wantUpdated      bool
+		wantErr          bool
+		errContains      string
+		expectedCPU      string
+		expectedMem      string
+		expectedLimitCPU string
+		expectedLimitMem string
 	}{
 		{
 			name: "Success - Container found and resized",
+			ctx:  context.Background(),
 			podTemplate: &corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -46,6 +50,7 @@ func TestResizeContainer(t *testing.T) {
 		},
 		{
 			name: "Failure - Container name not matching",
+			ctx:  context.Background(),
 			podTemplate: &corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -67,6 +72,7 @@ func TestResizeContainer(t *testing.T) {
 		},
 		{
 			name: "Success - Verify resource values are overwritten",
+			ctx:  context.Background(),
 			podTemplate: &corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -96,6 +102,7 @@ func TestResizeContainer(t *testing.T) {
 		},
 		{
 			name: "Failure - Recommendation already matches requests",
+			ctx:  context.Background(),
 			podTemplate: &corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -124,7 +131,78 @@ func TestResizeContainer(t *testing.T) {
 			errContains: "Container app in workload test-workload: resources match recommendation",
 		},
 		{
+			name: "Success - Requests match but limits differ when useLimits enabled",
+			ctx:  ctxkeys.WithUseLimits(context.Background(), true),
+			podTemplate: &corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "app",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("200m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("1Gi"),
+								},
+							},
+						},
+					},
+				},
+			},
+			recommendation: &model.Recommendation{
+				Container:                   "app",
+				WorkloadName:                "test-workload",
+				CpuRequestRecommendation:    "200m",
+				CpuLimitRecommendation:      "1000m",
+				MemoryRequestRecommendation: "512Mi",
+				MemoryLimitRecommendation:   "2Gi",
+			},
+			wantUpdated:      true,
+			expectedCPU:      "200m",
+			expectedMem:      "512Mi",
+			expectedLimitCPU: "1",
+			expectedLimitMem: "2Gi",
+		},
+		{
+			name: "Failure - Requests and limits already match when useLimits enabled",
+			ctx:  ctxkeys.WithUseLimits(context.Background(), true),
+			podTemplate: &corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "app",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("200m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("1"),
+									corev1.ResourceMemory: resource.MustParse("2Gi"),
+								},
+							},
+						},
+					},
+				},
+			},
+			recommendation: &model.Recommendation{
+				Container:                   "app",
+				WorkloadName:                "test-workload",
+				CpuRequestRecommendation:    "200m",
+				CpuLimitRecommendation:      "1000m",
+				MemoryRequestRecommendation: "512Mi",
+				MemoryLimitRecommendation:   "2Gi",
+			},
+			wantUpdated: false,
+			wantErr:     true,
+			errContains: "Container app in workload test-workload: resource requests and limits already match the recommendation",
+		},
+		{
 			name: "Failure - Invalid CPU recommendation",
+			ctx:  context.Background(),
 			podTemplate: &corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -146,6 +224,7 @@ func TestResizeContainer(t *testing.T) {
 		},
 		{
 			name: "Failure - Invalid memory recommendation",
+			ctx:  context.Background(),
 			podTemplate: &corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -169,7 +248,10 @@ func TestResizeContainer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := tt.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
 			workload := &Workload{
 				Template: tt.podTemplate,
 			}
@@ -205,6 +287,19 @@ func TestResizeContainer(t *testing.T) {
 				}
 				if mem != tt.expectedMem {
 					t.Errorf("Memory request mismatch: got %v, want %v", mem, tt.expectedMem)
+				}
+
+				if tt.expectedLimitCPU != "" {
+					limitCPU := updatedContainer.Resources.Limits.Cpu().String()
+					if limitCPU != tt.expectedLimitCPU {
+						t.Errorf("CPU limit mismatch: got %v, want %v", limitCPU, tt.expectedLimitCPU)
+					}
+				}
+				if tt.expectedLimitMem != "" {
+					limitMem := updatedContainer.Resources.Limits.Memory().String()
+					if limitMem != tt.expectedLimitMem {
+						t.Errorf("Memory limit mismatch: got %v, want %v", limitMem, tt.expectedLimitMem)
+					}
 				}
 			}
 		})
