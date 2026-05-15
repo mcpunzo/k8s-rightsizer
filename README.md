@@ -104,13 +104,18 @@ Below is a list of all the parameters of the k8s-rightsizer. You can use them by
 | ENV                  | local \| dev  | local     | The tool execution environment                                   |
 | RESIZE_ON_RECREATE   | true \| false | false     | Whether to resize workload with update strategy Recreate         |
 | DRY_RUN              | true \| false | false     | Plan the execution without resizing containers                   |
-| WORKERS              |               | 1         | Number of concurrent resizing workers*                            |
+| WORKERS              |               | 1         | Number of concurrent resizing workers¹                           |
+| RESIZE_STRATEGY      | container\|workload | container | container strategy applies recommendations container by container. workload strategy applies recommendations per workload, i.e. multiple recommendations for the same workload are applied at once²          |
+| USE_LIMITS              | true \| false | false     | Set cpu and memory limits on workload containers 
 
-*Using concurrent workers can be helpful for speeding up work. Considerations:
+
+¹ Using concurrent workers can be helpful for speeding up work. Considerations:
 - 3-5 workers are a safe and prudent threshold
 - 10 workers for robust clusters with small microservices
 - 20+ workers is not recommended as it may cause **node pressure**
 
+² Workload strategy applies all the recommendations related to a workload at once. This means one rollout for workload with multiple containers. In case of rollback all the recommendations will be lost.
+The container strategy applies recommendations container by container for each workload. Every recommendation creates a new rollout, hence workload with multiple containers will restart multiple times. In case of rollback only the last recommendation will be lost.
 
 # 🛡️ Rollback Logic Specification
 
@@ -176,7 +181,7 @@ If a failure is detected, the tool immediately aborts the monitoring and initiat
 4. **BACKUP** ➔ Create current `resources` backup.
 5. **PATCH** ➔ Apply new `resources`.
 6. **MONITOR** ➔ Watch Pod status.
-   * ✅ **IF READY** within 3m ➔ **COMMIT** (Next row).
+   * ✅ **IF READY** within a specific time period ➔ **COMMIT** (Next row).
    * ❌ **IF ERROR** (OOM/Crash/Timeout) ➔ **ROLLBACK**.
 7. **RESTORE** ➔ Re-apply backup ➔ **LOG ERROR**.
 
@@ -218,3 +223,4 @@ Recommendation file (.xslx, .xsl) must contain the following columns (order is i
 **Note** Empty values for recommended columns are not allowed. Therefore set 
   - **CPU Limit Recommended** to 0m and 
   - **Memory Limit Recommended** to 0Mi
+  - If USE_LIMITS is set to true, all limits must be specified and they have to be greater or equal than the related request (e.g. cpu request <= cpu limit and mem request <= mem limit) 

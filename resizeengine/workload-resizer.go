@@ -8,425 +8,177 @@ import (
 	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/util/retry"
+	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
 )
 
-const (
-	WorkloadCheckInterval   = 10 * time.Second
-	DeploymentCheckTimeout  = 15 * time.Minute
-	StatefulsetCheckTimeout = 30 * time.Minute
-)
-
-// Resizer defines the interface for the resizer that processes recommendations and performs resizing operations on workloads.
-type Resizer interface {
-	Resize(ctx context.Context, rec []model.Recommendation) error
-}
-
-// WorkloadResizer is an implementation of the Resizer interface that processes recommendations and performs resizing operations on Kubernetes workloads (Deployments and StatefulSets).
+// WorkloadResizer is an implementation of the Resizer interface that processes recommendations and performs resizing operations on Kubernetes workloads at the workload level, allowing for more coarse-grained control over resource adjustments.
 type WorkloadResizer struct {
-	client              K8sClient
-	deploymentWorkload  *DeploymentWorkload
-	statefulSetWorkload *StatefulSetWorkload
+	BaseResizer
 }
 
 // NewWorkloadResizer creates a new instance of WorkloadResizer with the provided Kubernetes client.
 // param client: The Kubernetes client used to interact with the cluster.
 // returns: A pointer to a new instance of WorkloadResizer.
-func NewWorkloadResizer(client K8sClient) *WorkloadResizer {
+func NewWorkloadResizer(client k8s.K8sClient) *WorkloadResizer {
 	return &WorkloadResizer{
-		client:              client,
-		deploymentWorkload:  &DeploymentWorkload{client: client},
-		statefulSetWorkload: &StatefulSetWorkload{client: client},
+		BaseResizer: BaseResizer{
+			client:              client,
+			deploymentWorkload:  k8s.NewDeploymentWorkload(client),
+			statefulSetWorkload: k8s.NewStatefulSetWorkload(client),
+			podSvc:              k8s.NewPodService(client),
+			nodeSvc:             k8s.NewNodeService(client),
+		},
 	}
 }
 
-// Resize processes a list of recommendations and performs resizing operations on the corresponding workloads concurrently using worker goroutines.
-// It creates a pool of worker goroutines that listen for recommendations on a channel, processes them, and sends the results to another channel.
-// The function waits for all workers to complete before closing the results channel and logging the outcomes.
+// Resize processes a list of recommendations to resize workloads parallel using a specified number of workers.
+// It distributes the recommendations into shards based on the workload ID to avoid update conflicts when multiple goroutines attempt to update the same workload.
+// Each worker processes recommendations from its assigned shard and sends results to a shared results channel, which are printed as they come in.
 // param ctx: The context for managing request deadlines and cancellation.
-// param recs: A slice of Recommendations to be processed for resizing workloads.
-// returns: An error if any issues occur during processing, or nil if all recommendations are processed successfully.
-func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendation) error {
-	numberOfWorkers := 1
-	if nw, ok := ctx.Value("numberOfWorkers").(int); ok {
-		numberOfWorkers = nw
-	}
+// param recs: A slice of Recommendations to be processed for resizing.
+// param numberOfWorkers: The number of parallel workers to use for processing the recommendations.
+// returns: An error if any issues occur during the resizing process.
+func (r *WorkloadResizer) Resize(ctx context.Context, recs []model.Recommendation, numberOfWorkers int) error {
+	//1. arrange recommendations by workload
+	workloadRecs := r.arrangeRecsByWorkload(recs)
 
-	// Problem: with parallel resizing executions and a resize strategy by container
-	// we can incurr in situation where more than 1 goroutines update the same workload causing an update conflict
-	// Solution: Create Shards, i.e. dedicated channel per worker and recs for the same workload are always send to
-	// the same shard and then processed by the same worker, avoiding update conflicts and retries.
-	resizeJobShards := make([]chan *model.Recommendation, numberOfWorkers)
-	for i := range resizeJobShards {
-		resizeJobShards[i] = make(chan *model.Recommendation, len(recs))
-	}
+	resizeJobs := make(chan []*model.Recommendation, numberOfWorkers) // Buffered channel to hold resize jobs
+	results := make(chan string, len(workloadRecs))
 
-	results := make(chan string, len(recs))
+	var wg sync.WaitGroup
 
-	// Start a goroutine to print results as they come into avoid waiting until all processing is done to see the output, and to prevent potential memory issues if there are many recommendations.
-	donePrinting := make(chan bool)
+	// Start a goroutine to print results as they come
+	donePrinting := make(chan struct{})
 	go func() {
 		for res := range results {
 			log.Println(res)
 		}
-		donePrinting <- true
+		donePrinting <- struct{}{}
 	}()
 
-	var wg sync.WaitGroup
-	for i := range resizeJobShards {
-		wg.Add(1)
-		go func(shardIndex int) {
-			defer wg.Done()
-			r.ResizeJob(ctx, resizeJobShards[shardIndex], results)
-		}(i)
+	// 2. Start worker goroutines
+	for range numberOfWorkers {
+		wg.Go(func() {
+			r.ResizeJob(ctx, resizeJobs, results)
+		})
 	}
 
-	//distribute recs to channels according to the WorkloadId
-	for _, rec := range recs {
-		shardId := GetShardIndex(rec.WorkloadID(), numberOfWorkers)
-		resizeJobShards[shardId] <- &rec
+	// 3. Send jobs to the channel
+	for _, recGroup := range workloadRecs {
+		resizeJobs <- recGroup
 	}
 
-	//cleanup
-	for i := range resizeJobShards {
-		close(resizeJobShards[i])
-	}
+	// 4. close the jobs channel and wait for workers to finish
+	close(resizeJobs) // Signal to workers that there are no more jobs
+	wg.Wait()         // Wait for all workers to finish
+	close(results)    // Close the results channel: this will terminate the for loop in the printing goroutine
 
-	wg.Wait()
-	close(results)
-
-	<-donePrinting // Wait for the printing goroutine to finish before exiting
+	<-donePrinting // Wait for the final printing to complete
 	return nil
+
 }
 
-// ResizeJob is a worker function that processes recommendations from the recs channel, performs resizing operations on the corresponding workloads, and sends the results to the results channel.
-// It listens for recommendations and context cancellation, and handles errors appropriately while processing each recommendation.
+// ResizeJob processes a batch of recommendations for a specific workload, performing validation, pre-checks, and resizing operations as needed. It retrieves the current state of the workload, validates the recommendations against the workload's configuration, and attempts to apply the recommended changes. The results of each operation are sent to a shared results channel for logging.
 // param ctx: The context for managing request deadlines and cancellation.
-// param recs: A channel from which to receive Recommendations to be processed.
-// param results: A channel to which to send the results of the resizing operations.
-func (r *WorkloadResizer) ResizeJob(ctx context.Context, recs <-chan *model.Recommendation, results chan<- string) {
-	for rec := range recs {
+// param workloadRecs: A channel that provides batches of recommendations grouped by workload.
+// param results: A channel for sending the results of the resizing operations, which will be logged by a separate goroutine.
+func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*model.Recommendation, results chan<- string) {
+	for recs := range workloadRecs {
 		select {
 		case <-ctx.Done():
 			log.Printf("Context canceled, stopping ResizeJob")
 			return
 		default:
-			log.Printf("Processing recommendation for %s (%s) in namespace %s\n", rec.WorkloadName, rec.Kind, rec.Namespace)
-
-			var err error
-			var workload WorkloadOps
-			switch rec.Kind {
-			case model.Deployment:
-				workload = r.deploymentWorkload
-			case model.ReplicaSet:
-				workload = r.deploymentWorkload
-			case model.StatefulSet:
-				workload = r.statefulSetWorkload
-			default:
-				err = fmt.Errorf("unsupported resource Kind for %s", rec.Kind)
-			}
-
+			// all rec elements have the same WorkloadID, environment, Kind and Namespace and workload name
+			log.Printf("Processing recommendation for %s\n", recs[0].WorkloadID())
+			workloadSvc, err := r.lookupWorkloadOps(recs[0].Kind)
 			if err != nil {
-				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", rec, err)
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", recs[0].WorkloadID(), err)
 				results <- errMsg
 				continue
 			}
 
-			err = r.ResizeWorkload(ctx, rec, workload)
+			//retrieve the current workload
+			log.Printf("Find Workload %s\n", recs[0].WorkloadID())
+			workload, err := workloadSvc.FindWorkload(ctx, recs[0])
 			if err != nil {
-				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", rec, err)
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", recs[0].WorkloadID(), err)
 				results <- errMsg
 				continue
 			}
 
-			okMsg := fmt.Sprintf("[OK] Resource resized for %s", rec)
+			//validate recommendations returning only the valid ones
+			newRecs := r.validateRecommendation(ctx, workload, recs)
+			if len(newRecs) == 0 {
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: no valid recommendations", workload.Id)
+				results <- errMsg
+				continue
+			}
+
+			log.Printf("PreCheck assessment for %s\n", workload.Id)
+			err = r.ResizePrecheck(ctx, workloadSvc, workload)
+			if err != nil {
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", workload.Id, err)
+				results <- errMsg
+				continue
+			}
+
+			log.Printf("Cluster nodes assessment for %s\n", workload.Id)
+			err = r.NodeCheck(ctx, workload)
+			if err != nil {
+				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", workload.Id, err)
+				results <- errMsg
+				continue
+			}
+
+			log.Printf("Try resizing %s\n", workload.Id)
+			err = r.ApplyResize(ctx, newRecs, workloadSvc, workload)
+			if err != nil {
+				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", workload.Id, err)
+				results <- errMsg
+				continue
+			}
+
+			okMsg := fmt.Sprintf("[OK] Resource resized for %s", workload.Id)
 			results <- okMsg
-			time.Sleep(1 * time.Second) // Small delay between processing recommendations to avoid overwhelming the cluster
-		}
-	}
-}
-
-// ResizeWorkload performs the resizing operation on a specific workload based on the provided recommendation and workload operations.
-// It retrieves the current state of the workload, applies the resizing changes, and checks the status of the workload after the update.
-// If any critical errors are detected during the status check, it attempts to roll back to the original resource values.
-// param ctx: The context for managing request deadlines and cancellation.
-// param rec: The Recommendation containing the new resource requests and target container information.
-// param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
-// returns: An error if any issues occur during processing, resizing, or rollback operations.
-func (r *WorkloadResizer) ResizeWorkload(ctx context.Context, rec *model.Recommendation, w WorkloadOps) error {
-	//retrieve the current workload
-	workload, err := w.FindWorkload(ctx, rec)
-	if err != nil {
-		return err
-	}
-
-	tryResize, err := r.ResizePrecheck(ctx, rec, w, workload)
-	if err != nil {
-		return err
-	}
-
-	if !tryResize {
-		return nil
-	}
-
-	// Deep copy in case of rollback
-	originalTemplate := workload.Template.DeepCopy()
-
-	err = w.ResizeWorkload(ctx, workload, rec)
-	if err != nil {
-		return fmt.Errorf("failed to update workload for %s: %v", rec, err)
-	}
-
-	// Check status with polling and timeout
-	workloadCheckTimeout := DeploymentCheckTimeout
-	if workload.WorkloadType == StatefulSet {
-		workloadCheckTimeout = StatefulsetCheckTimeout
-	}
-
-	checkStatusFunc := r.CheckWorkloadStatus(ctx, w, workload)
-	err = wait.PollUntilContextTimeout(ctx, WorkloadCheckInterval, workloadCheckTimeout, false, checkStatusFunc)
-
-	if err != nil {
-		log.Printf("[!!!] ERROR: %v. Rollback Started %s/%s", err, workload.Namespace, workload.Name)
-
-		// Create a new rollback recommendation based on the original template values (the backup)
-		rollbackRec := r.CreateRollbackRecommendation(rec, *originalTemplate)
-		if rollbackRec == nil {
-			return fmt.Errorf("impossible to create rollback recommendation for %s", workload.Name)
-		}
-
-		// Use a fresh context for rollback: the polling context may already be expired.
-		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workloadCheckTimeout*time.Minute)
-		defer cancel()
-		// Retry on conflict: the deployment may still be rolling out when we try to update it,
-		// causing a ResourceVersion conflict ("object has been modified"). Re-fetch and retry.
-		errRollback := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			// Retrieve the fresh workload object from the cluster to avoid ResourceVersion conflicts
-			freshWorkload, errFetch := w.FindWorkload(rollbackCtx, rec)
-			if errFetch != nil {
-				return fmt.Errorf("failed to retrieve workload for rollback: %v", errFetch)
+			select {
+			case <-time.After(30 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
+			case <-ctx.Done():
+				log.Printf("Context canceled during delay, stopping ResizeJob")
+				return
 			}
 
-			// Perform the resize to the original values (rollback)
-			return w.ResizeWorkload(rollbackCtx, freshWorkload, rollbackRec)
-		})
-
-		if errRollback != nil {
-			return fmt.Errorf("failed update (%v) and failed rollback (%v)", err, errRollback)
 		}
-
-		return fmt.Errorf("update canceled and rollback completed successfully: %v", err)
 	}
-
-	log.Printf("[SUCCESS] %s/%s updated and stable", workload.Namespace, workload.Name)
-	return nil
 }
 
-// ResizePrecheck performs pre-checks before resizing the workload, such as checking for PDB restrictions and UpdateStrategy settings.
-// It returns a boolean indicating whether the resize operation should proceed and an error if any issues are detected that would prevent resizing.
+// validateRecommendation checks the validity of the recommendations for a given workload and returns a filtered list of valid recommendations. It iterates through the provided recommendations, validates each one against the workload's current configuration, and logs any issues encountered during validation. If a recommendation is invalid, it is skipped and not included in the returned list of valid recommendations.
 // param ctx: The context for managing request deadlines and cancellation.
-// param rec: The Recommendation containing the new resource requests and target container information.
-// param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
-// param workload: The Workload struct representing the workload to be resized.
-// returns: A boolean indicating whether the resize operation should proceed, and an error if any issues are detected that would prevent resizing.
-func (r *WorkloadResizer) ResizePrecheck(ctx context.Context, rec *model.Recommendation, w WorkloadOps, workload *Workload) (bool, error) {
-	if workload == nil {
-		return false, fmt.Errorf("workload not found for %s", rec)
-	}
-
-	// check if the workload is in a paused state
-	pause, err := w.IsWorkloadInPausedState(ctx, workload)
-	if err != nil {
-		return false, fmt.Errorf("failed to check if workload is paused for %s: %v", rec, err)
-	}
-	if pause {
-		return false, fmt.Errorf("skipping resize as workload is paused for %s", rec)
-	}
-
-	// Check any PDB restrictions before resizing
-	IsPDBTooRestrictive, err := r.IsPDBTooRestrictive(ctx, workload.Namespace, workload.LabelSelector)
-	if err != nil {
-		//TODO this may be configurable: we can decide to fail immediately if we cannot check PDBs, or to proceed with a warning. For now, let's proceed with a warning, but log the error.
-		log.Printf("failed to check PDB restrictions for %s: %v. Proceeding with resize, but be aware of potential disruptions.\n", rec, err)
-	}
-	if IsPDBTooRestrictive {
-		return false, fmt.Errorf("skipping resize due to PDB restrictions for %s: resizing may cause disruption", rec)
-	}
-
-	// check UpdateStrategy of the workload and skip if it's set to OnDelete (for Statefulset) or Recreate (for Deployment) to avoid triggering a rollout that may cause downtime. This can be done by retrieving the current UpdateStrategy of the workload and checking its type before proceeding with the resize operation.
-	switch workload.UpdateStrategy {
-	case "OnDelete":
-		return false, fmt.Errorf("skipping resize due to UpdateStrategy set OnDelete for %s: resizing would have no effect", rec)
-	case "Recreate":
-		resizeOnRecreate := ctx.Value("resizeOnRecreate")
-		if resizeOnRecreate == nil || !resizeOnRecreate.(bool) {
-			return false, fmt.Errorf("skipping resize due to UpdateStrategy set on Recreate for %s: resizing may cause downtime", rec)
-		}
-		log.Printf("Warning: UpdateStrategy is set to Recreate for %s. Resizing may cause downtime, but proceeding as per configuration.\n", rec)
-	}
-	// if we are here, it means that the UpdateStrategy is RollingUpdate, so we can proceed with the resize operation.
-	// we could add another check on statefulset and check if the partition is set to 0, which means that all pods will be updated at once, and in that case we could skip the resize to avoid potential downtime. This can be done by retrieving the current UpdateStrategy of the statefulset and checking the partition value before proceeding with the resize operation.
-
-	status, err := w.GetStatus(ctx, workload)
-	if err != nil {
-		return false, fmt.Errorf("failed to get status for %s: %v", rec, err)
-	}
-	if status.AvailableReplicas < status.ExpectedReplicas {
-		return false, fmt.Errorf("skipping resize due to adegraded state observed for %s: %v", rec, err)
-	}
-
-	if status.UpdatedReplicas < status.ExpectedReplicas {
-		return false, fmt.Errorf("skipping resize as we are in the middle of a rollout for %s: %v", rec, err)
-	}
-
-	isThereAnError, reason := r.CheckPodCriticalErrors(ctx, workload)
-	if isThereAnError {
-		return false, fmt.Errorf("skipping resize due to critical error detected in pods for %s: %s", rec, reason)
-	}
-
-	return true, nil
-}
-
-// CreateRollbackRecommendation creates a new Recommendation based on the original resource values from the PodTemplateSpec for rollback purposes.
-// It returns a new Recommendation with the original CPU and Memory requests for the target container, or nil if the container is not found in the template.
-// param rec: The original Recommendation containing the namespace, workload name, and container information.
-// param template: The PodTemplateSpec from which to extract the original resource values for rollback.
-// returns: A pointer to a new Recommendation with the original resource values for rollback, or nil if the container is not found in the template.
-func (r *WorkloadResizer) CreateRollbackRecommendation(rec *model.Recommendation, template v1.PodTemplateSpec) *model.Recommendation {
-	newRec := rec.DeepCopy()
-
-	for _, c := range template.Spec.Containers {
-		if c.Name == rec.Container {
-			newRec.CpuRequestRecommendation = c.Resources.Requests.Cpu().String()
-			newRec.MemoryRequestRecommendation = c.Resources.Requests.Memory().String()
-			return newRec
-		}
-	}
-
-	return nil
-}
-
-// CheckWorkloadStatus checks the status of the workload to determine if the rollout has completed successfully or if there are any critical errors.
-// It returns a function that can be used with wait.PollUntilContextTimeout to periodically check the status of the workload until it is stable or an error is detected.
-// param ctx: The context for managing request deadlines and cancellation.
-// param client: The Kubernetes client used to interact with the cluster.
-// param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
-// param workload: The Workload struct representing the workload.
-// returns: A function that can be used with wait.PollUntilContextTimeout to check the status of the workload.
-func (r *WorkloadResizer) CheckWorkloadStatus(ctx context.Context, w WorkloadOps, workload *Workload) func(context.Context) (bool, error) {
-	return func(ctx context.Context) (bool, error) {
-		// 1. retrieve the current status of the workload
-		status, err := w.GetStatus(ctx, workload)
+// param w: The Workload against which the recommendations will be validated.
+// param recs: A slice of Recommendations to be validated.
+// returns: A slice of pointers to Recommendations that are valid for the given workload.
+func (r *WorkloadResizer) validateRecommendation(ctx context.Context, w *k8s.Workload, recs []*model.Recommendation) []*model.Recommendation {
+	newRecs := make([]*model.Recommendation, 0, len(recs))
+	for _, rec := range recs {
+		err := w.ValidateRecommendations(ctx, rec)
 		if err != nil {
-			return false, err
-		}
-
-		// 2. Check for critical errors (OOM, CrashLoop, etc.)
-		// The CheckPodCriticalErrors function is already generic because it accepts the LabelSelector
-		isError, reason := r.CheckPodCriticalErrors(ctx, workload)
-		if isError {
-			return false, fmt.Errorf("fail detected: %s", reason)
-		}
-
-		// 3. Check if the rollout has completed
-		if status.UpdatedReplicas == status.ExpectedReplicas &&
-			status.AvailableReplicas == status.ExpectedReplicas &&
-			status.ObservedGeneration >= status.Generation {
-			log.Printf("[%s] Rollout successfully completed", workload.Name)
-			return true, nil
-		}
-
-		log.Printf("[%s] Rollout in progress... (%d/%d ready)", workload.Name, status.AvailableReplicas, status.ExpectedReplicas)
-		return false, nil
-	}
-}
-
-// CheckPodCriticalErrors checks for critical errors in the Pods associated with the workload, such as scheduling issues, CrashLoopBackOff, OOMKilled, etc.
-// It returns a boolean indicating whether a critical error was detected and a string with the reason for the error if applicable.
-// param ctx: The context for managing request deadlines and cancellation.
-// param client: The Kubernetes client used to interact with the cluster.
-// param namespace: The namespace of the workload.
-// returns: A boolean indicating whether a critical error was detected, and a string with the reason for the error if applicable.
-func (r *WorkloadResizer) CheckPodCriticalErrors(ctx context.Context, workload *Workload) (bool, string) {
-	selector, _ := metav1.LabelSelectorAsSelector(workload.LabelSelector)
-	pods, _ := r.client.CoreV1().Pods(workload.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector.String(),
-	})
-
-	for _, p := range pods.Items {
-		// 1. Check if the Pod is stuck in scheduling (Cluster full or insufficient resources)
-		if p.Status.Phase == v1.PodPending {
-			for _, cond := range p.Status.Conditions {
-				if cond.Type == v1.PodScheduled && cond.Status == v1.ConditionFalse && cond.Reason == "Unschedulable" {
-					return true, fmt.Sprintf("Insufficient resources in the cluster: %s", cond.Message)
-				}
-			}
-		}
-
-		// 2. Check the status of individual containers
-		for _, cs := range p.Status.ContainerStatuses {
-			// Waiting cases
-			if cs.State.Waiting != nil {
-				reason := cs.State.Waiting.Reason
-				if reason == "CrashLoopBackOff" || reason == "ImagePullBackOff" || reason == "CreateContainerConfigError" {
-					return true, fmt.Sprintf("Container in error: %s", reason)
-				}
-			}
-
-			// Terminated cases
-			if cs.State.Terminated != nil {
-				if cs.State.Terminated.Reason == "OOMKilled" {
-					return true, "OOMKilled: Insufficient memory for startup"
-				}
-			}
-
-			// Check the last termination state (if it crashed recently)
-			if cs.LastTerminationState.Terminated != nil && cs.LastTerminationState.Terminated.Reason == "OOMKilled" {
-				return true, "OOMKilled detected in the last restart: Insufficient memory for startup"
-			}
-		}
-	}
-	return false, ""
-}
-
-// IsPDBRestrictions checks if there are any Pod Disruption Budget restrictions that would prevent the workload from being safely resized.
-// It returns a boolean indicating whether PDB restrictions are present and an error if the check fails.
-// param ctx: The context for managing request deadlines and cancellation.
-// param namespace: The namespace of the workload.
-// param labelSelector: The label selector used to identify the Pods associated with the workload.
-// returns: A boolean indicating whether PDB restrictions are present and too restrictive, false if they are not, and an error if the check fails.
-func (r *WorkloadResizer) IsPDBTooRestrictive(ctx context.Context, namespace string, labelSelector *metav1.LabelSelector) (bool, error) {
-	if labelSelector == nil || len(labelSelector.MatchLabels) == 0 {
-		return false, nil // No selectors, we assume no PDB
-	}
-
-	pdbs, err := r.client.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return false, fmt.Errorf("failed to list Pod Disruption Budgets: %v", err)
-	}
-
-	workloadLabels := labels.Set(labelSelector.MatchLabels)
-
-	for _, pdb := range pdbs.Items {
-		pdbSelector, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
-		if err != nil {
+			log.Printf("container %s not found in workload %s: %v", rec.ContainerID(), rec.WorkloadID(), err)
 			continue
 		}
-
-		// check if the PDB protects our Pods by matching the labels
-		if pdbSelector.Matches(workloadLabels) {
-			// The correct field is DisruptionsAllowed, not DesiredHealthy.
-			// If DisruptionsAllowed is 0, it means that no disruptions are currently allowed,
-			// which would prevent us from safely resizing the workload.
-			if pdb.Status.DisruptionsAllowed == 0 {
-				return true, nil
-			}
-		}
+		newRecs = append(newRecs, rec)
 	}
 
-	return false, nil
+	return newRecs
+}
+
+// ArrangeRecsByWorkload takes a slice of Recommendations and organizes them into a map where the key is a unique identifier for each workload (combining namespace, workload name, and workload kind) and the value is a slice of pointers to Recommendations that belong to that workload. This allows for efficient grouping of recommendations by workload, which can be useful for processing them in batches or avoiding conflicts when updating workloads in parallel.
+// param recs: A slice of Recommendations to be arranged by workload.
+// returns: A map where the key is a unique identifier for each workload and the value is a slice of pointers to Recommendations that belong to that workload.
+func (r *WorkloadResizer) arrangeRecsByWorkload(recs []model.Recommendation) map[string][]*model.Recommendation {
+	workloadRecs := make(map[string][]*model.Recommendation)
+	for _, rec := range recs {
+		workloadID := rec.WorkloadID()
+		workloadRecs[workloadID] = append(workloadRecs[workloadID], &rec)
+	}
+	return workloadRecs
 }

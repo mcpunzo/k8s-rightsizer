@@ -64,3 +64,9 @@ func (r *Recommendation) DeepCopy() *Recommendation {
 func (r *Recommendation) WorkloadID() string {
 	return fmt.Sprintf("%s-%s-%s-%s", r.Environment, r.Namespace, r.Kind, r.WorkloadName)
 }
+
+// ContainerID generates a unique identifier for the container within the workload based on its environment, namespace, kind, workload name, and container name.
+// returns: A string that uniquely identifies the container in the format "Environment-Namespace-Kind-WorkloadName-Container".
+func (r *Recommendation) ContainerID() string {
+	return fmt.Sprintf("%s-%s-%s-%s-%s", r.Environment, r.Namespace, r.Kind, r.WorkloadName, r.Container)
+}

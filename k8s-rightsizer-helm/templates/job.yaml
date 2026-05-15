@@ -22,11 +22,16 @@ spec:
           - "{{ .Values.recommendations.mountPath }}/{{ .Values.recommendations.fileName }}"
           - "--workers"
           - "{{ .Values.settings.workers }}"
+          - "--resize-strategy"
+          - "{{ .Values.settings.resizeStrategy }}"
           {{- if .Values.settings.dryRun }}
           - "--dry-run"
           {{- end }}
           {{- if .Values.settings.resizeOnRecreate }}
           - "--resize-on-recreate"
+          {{- end }}
+          {{- if .Values.settings.useLimits }}
+          - "--use-limits"
           {{- end }}
         volumeMounts:
         - name: recommendations-storage

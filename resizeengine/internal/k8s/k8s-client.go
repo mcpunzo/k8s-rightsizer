@@ -1,4 +1,4 @@
-package resizeengine
+package k8s
 
 import (
 	appsv1 "k8s.io/client-go/kubernetes/typed/apps/v1"

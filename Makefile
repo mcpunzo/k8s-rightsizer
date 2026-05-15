@@ -12,11 +12,18 @@ ENV ?= local
 RESIZE_ON_RECREATE ?= false
 DRY_RUN ?= false
 WORKERS ?= 1
+RESIZE_STRATEGY ?= container
+USE_LIMITS ?= false
 
 # check for valid environment
 SUPPORTED_ENVS := local dev
 ifeq ($(filter $(ENV),$(SUPPORTED_ENVS)),)
     $(error Invalid ENV=$(ENV). Supported envs are: $(SUPPORTED_ENVS))
+endif
+
+SUPPORTED_STRATEGIES := container workload
+ifeq ($(filter $(RESIZE_STRATEGY),$(SUPPORTED_STRATEGIES)),)
+	$(error Invalid RESIZE_STRATEGY=$(RESIZE_STRATEGY). Supported strategies are: $(SUPPORTED_STRATEGIES))
 endif
 
 
@@ -71,7 +78,9 @@ endif
 		--set image.tag=$(VERSION) \
 		--set settings.dryRun=$(DRY_RUN) \
 		--set settings.resizeOnRecreate=$(RESIZE_ON_RECREATE) \
-		--set settings.workers="$(WORKERS)"
+		--set settings.workers="$(WORKERS)" \
+		--set settings.resizeStrategy=$(RESIZE_STRATEGY) \
+		--set settings.useLimits=$(USE_LIMITS)
 
 .PHONY: undeploy
 undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))

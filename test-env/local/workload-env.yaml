@@ -161,3 +161,34 @@ spec:
           requests:
             cpu: "150m"
             memory: "48Mi"
+---
+# --- 7. MULTI-CONTAINER DEPLOYMENT (Workload Strategy Case) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-workload-strategy
+  namespace: k8s-rightsizer-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multi-container
+  template:
+    metadata:
+      labels:
+        app: multi-container
+    spec:
+      containers:
+      - name: sidecar-1
+        image: busybox
+        command: ["sh", "-c", "sleep 3600"]
+      - name: sidecar-2
+        image: busybox
+        command: ["sh", "-c", "sleep 3600"]
+      - name: main-app
+        image: nginx:stable-alpine
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "200m"
+---

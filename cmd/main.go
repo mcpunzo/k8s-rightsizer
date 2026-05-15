@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/recommendation/reader"
 	re "github.com/mcpunzo/k8s-rightsizer/resizeengine"
 	"k8s.io/client-go/kubernetes"
@@ -23,18 +24,18 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "Enable dry-run mode")
 	resizeOnRecreate := flag.Bool("resize-on-recreate", false, "Allow resizing if the workload update strategy is Recreate (default: false)")
 	numberOfWorkers := flag.Int("workers", 1, "Number of concurrent workers for processing recommendations")
+	resizeStrategy := flag.String("resize-strategy", "container", "Resize strategy to use (default: container, options: container, workload)")
+	useLimits := flag.Bool("use-limits", false, "Use resource limits instead of requests for resizing (default: false)")
 	flag.Parse()
 
-	if *numberOfWorkers <= 0 {
-		log.Fatal("workers parameters must be greater than 0")
-	}
+	checkRequiredFlags(*recFile, *resizeStrategy, *numberOfWorkers)
 
 	log.Printf("DryRun: %v", *dryRun)
 	log.Printf("Recommendations file: %v", *recFile)
 	log.Printf("Resize on Recreate: %v", *resizeOnRecreate)
 	log.Printf("Number of workers: %v", *numberOfWorkers)
-
-	
+	log.Printf("Resize strategy: %v", *resizeStrategy)
+	log.Printf("Use limits: %v", *useLimits)
 
 	fileInfo, err := os.Stat(*recFile)
 	if err != nil {
@@ -61,12 +62,24 @@ func main() {
 	log.Printf("Recommendations read: %v", len(recs))
 
 	// 3. Execute Engine
-	engine := re.NewWorkloadResizer(k8sClient)
-	ctx := context.WithValue(context.Background(), "dryRun", *dryRun)
-	ctx = context.WithValue(ctx, "resizeOnRecreate", *resizeOnRecreate)
-	ctx = context.WithValue(ctx, "numberOfWorkers", *numberOfWorkers)
 
-	if err := engine.Resize(ctx, recs); err != nil {
+	var resizer re.Resizer
+	switch *resizeStrategy {
+	case "container":
+		resizer = re.NewContainerResizer(k8sClient)
+	case "workload":
+		resizer = re.NewWorkloadResizer(k8sClient)
+	default:
+		log.Fatalf("Invalid resize strategy: %v", *resizeStrategy)
+	}
+
+	rightsizer := re.NewWorkloadRightsizer(resizer)
+
+	ctx := ctxkeys.WithDryRun(context.Background(), *dryRun)
+	ctx = ctxkeys.WithResizeOnRecreate(ctx, *resizeOnRecreate)
+	ctx = ctxkeys.WithNumberOfWorkers(ctx, *numberOfWorkers)
+	ctx = ctxkeys.WithUseLimits(ctx, *useLimits)
+	if err := rightsizer.Rightsize(ctx, recs); err != nil {
 		log.Printf("Resize process completed with some issues: %v", err)
 	}
 
@@ -74,7 +87,20 @@ func main() {
 
 }
 
-func getClientset() (re.K8sClient, error) {
+func checkRequiredFlags(recFile, resizeStrategy string, numberOfWorkers int) {
+	if recFile == "" {
+		log.Fatal("file-path is required")
+	}
+
+	if numberOfWorkers <= 0 {
+		log.Fatal("workers parameter must be greater than 0")
+	}
+	if resizeStrategy != "container" && resizeStrategy != "workload" {
+		log.Fatal("resize-strategy must be either 'container' or 'workload'")
+	}
+}
+
+func getClientset() (*kubernetes.Clientset, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
