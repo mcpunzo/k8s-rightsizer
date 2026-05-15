@@ -23,4 +23,4 @@ See [`SECURITY.md`](SECURITY.md) for private reporting instructions.
 
 For enterprise support, proprietary plugin/connector packages, enterprise deployment, or partnership requests, contact:
 
-- `contacta@k8srightsizer.com`
+- `contacts@k8srightsizer.com`
