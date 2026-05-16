@@ -52,7 +52,7 @@ Minikube needs the image in its internal registry. When using Podman, the most r
 
 ```bash
 # 1. Build the image with a local tag
-make image-build REGISTRY_USER=localhost VERSION=local
+make image-build REGISTRY_USER=localhost TAG=local
 
 # 2. Load image into Minikube and deploy via helm
 make deploy
@@ -72,7 +72,7 @@ make undeploy
 ```bash
 #1. set env variables
 export REGISTRY_USER=<registry_user>
-export VERSION=<image_ver>
+export TAG=<image_ver>
 
 #2. build and push the image to your image registry
 make image-build  
@@ -99,8 +99,8 @@ Below is a list of all the parameters of the k8s-rightsizer. You can use them by
 | Parameter            | Value       | Default   | Description                                                      |
 |----------------------|-------------|-----------|------------------------------------------------------------------|
 | REGISTRY_USER        |             | localhost | The Container Registry                                           |
-| VERSION              |             | local     | Version of the container image                                   |
-| IMG                  | $(REGISTRY_USER)/k8s-rightsizer:$(VERSION) |           | Container image name and tag                                     |
+| TAG              |             | local     | Tag version of the container image                                   |
+| IMG                  | $(REGISTRY_USER)/k8s-rightsizer:$(TAG) |           | Container image name and tag                                     |
 | ENV                  | local \| dev  | local     | The tool execution environment                                   |
 | RESIZE_ON_RECREATE   | true \| false | false     | Whether to resize workload with update strategy Recreate         |
 | DRY_RUN              | true \| false | false     | Plan the execution without resizing containers                   |

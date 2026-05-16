@@ -9,8 +9,8 @@ GOLANGCI_LINT=$(GOPATH)/bin/golangci-lint
 # Variables
 APP_NAME := k8s-rightsizer
 REGISTRY_USER ?= localhost
-VERSION ?=local
-IMG := $(REGISTRY_USER)/$(APP_NAME):$(VERSION)
+TAG ?=local
+IMG := $(REGISTRY_USER)/$(APP_NAME):$(TAG)
 ENV ?= local
 RESIZE_ON_RECREATE ?= false
 DRY_RUN ?= false
@@ -67,7 +67,7 @@ image-push: ## Push the image to the registry
 	$(CONTAINER_ENGINE) push $(IMG)
 
 .PHONY: deploy
-deploy: ## Deploy with Helm (usage: make deploy [ENV=local|dev] [REGISTRY_USER=your-registry-user] [VERSION=your-version])
+deploy: ## Deploy with Helm (usage: make deploy [ENV=local|dev] [REGISTRY_USER=your-registry-user] [TAG=your-tag-version])
 ifeq ($(ENV),local)
 	@echo "📦 Exporting image for local deployment..."
 	$(CONTAINER_ENGINE) save $(IMG) -o rightsizer.tar
@@ -83,7 +83,7 @@ endif
 		-f ./k8s-rightsizer-helm/values.yaml \
 		-f ./k8s-rightsizer-helm/$(ENV)/values.yaml \
 		--set image.repository=$(REGISTRY_USER)/$(APP_NAME) \
-		--set image.tag=$(VERSION) \
+		--set image.tag=$(TAG) \
 		--set settings.dryRun=$(DRY_RUN) \
 		--set settings.resizeOnRecreate=$(RESIZE_ON_RECREATE) \
 		--set settings.workers="$(WORKERS)" \
