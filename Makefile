@@ -2,6 +2,9 @@
 
 # Check for container engine (podman or docker)
 CONTAINER_ENGINE ?= $(shell which docker >/dev/null 2>&1 && echo docker || echo podman)
+GOPATH=$(shell go env GOPATH)
+GOVULNCHECK=$(GOPATH)/bin/govulncheck
+
 
 # Variables
 APP_NAME := k8s-rightsizer
@@ -36,7 +39,7 @@ clean: ## Clean build artifacts
 .PHONY: test
 test: clean ## Run tests
 	@echo "Running tests..."
-	go test -v --cover ./...
+	go test -race -v --cover ./...
 
 .PHONY: vet
 vet: ## Run static analysis
@@ -88,7 +91,15 @@ undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))
 	helm uninstall $(APP_NAME) --namespace k8s-rightsizer
 	kubectl delete ns k8s-rightsizer
 
+.PHONY: vulncheck
+vulncheck: $(GOVULNCHECK)
+	@echo "🔍 Running govulncheck..."
+	@$(GOVULNCHECK) ./...
 
+# Install govulncheck if not present in GOPATH
+$(GOVULNCHECK):
+	@echo "📥 govulncheck not found. Installing..."
+	@go install golang.org/x/vuln/cmd/govulncheck@latest
 
 echo:
 	@echo "$(IMG)"
