@@ -1,0 +1,26 @@
+name: PR Image Validation & Scan
+
+on:
+  pull_request:
+    branches: [ develop, main ]
+
+jobs:
+  validate-and-scan:
+    name: Build & Scan Container
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Build Docker Image via Makefile
+        run: make image-build TAG=pr-scan
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: 'localhost/k8s-rightsizer:pr-scan'
+          format: 'table'
+          exit-code: '1' # fail if critical or high vulnerabilities are found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'

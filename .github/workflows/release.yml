@@ -1,0 +1,52 @@
+name: Release Docker Image
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Production Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Tag Name
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker Image
+        run: |
+          make image-build IMG=ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.get_version.outputs.VERSION }}
+    
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: 'ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.get_version.outputs.VERSION }}'
+          format: 'table'
+          exit-code: '1' # fail if critical or high vulnerabilities are found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Push Image to GHCR
+        run: |
+          docker push ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.get_version.outputs.VERSION }}
