@@ -4,7 +4,7 @@
 CONTAINER_ENGINE ?= $(shell which docker >/dev/null 2>&1 && echo docker || echo podman)
 GOPATH=$(shell go env GOPATH)
 GOVULNCHECK=$(GOPATH)/bin/govulncheck
-
+GOLANGCI_LINT=$(GOPATH)/bin/golangci-lint
 
 # Variables
 APP_NAME := k8s-rightsizer
@@ -41,10 +41,15 @@ test: clean ## Run tests
 	@echo "Running tests..."
 	go test -race -v --cover ./...
 
-.PHONY: vet
-vet: ## Run static analysis
-	@echo "Static check..."
-	go vet ./...
+.PHONY: lint
+lint: $(GOLANGCI_LINT)
+	@echo "🔬 Running golangci-lint..."
+	@$(GOLANGCI_LINT) run ./...
+
+$(GOLANGCI_LINT):
+	@echo "📥 golangci-lint not found. Installing..."
+	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin
+
 
 .PHONY: build-bin
 build-bin: ## Build the binary

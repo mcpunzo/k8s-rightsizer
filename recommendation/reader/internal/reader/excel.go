@@ -22,7 +22,11 @@ func (r *ExcelReader) Read() ([]model.Recommendation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error opening file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			fmt.Printf("error closing file: %v\n", err)
+		}
+	}()
 
 	// let's assume the data is in the first sheet
 	sheetName := f.GetSheetName(0)

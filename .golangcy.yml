@@ -1,0 +1,25 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck      # Verifica che gli errori siano gestiti
+    - gosimple      # Suggerisce semplificazioni del codice
+    - govet         # Report di potenziali problemi strutturali
+    - ineffassign   # Rileva assegnazioni inutilizzate
+    - staticcheck   # Analisi statica avanzata (il top)
+    - unused        # Trova codice, costanti o funzioni inutilizzate
+    - gocyclo       # Controlla la complessità ciclimatica (funzioni troppo lunghe)
+    - revive        # Sostituto moderno di golint (regole di stile)
+    - gofmt         # Verifica la formattazione nativa di Go
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15 # Se una funzione ha complessità > 15, va spezzata
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
