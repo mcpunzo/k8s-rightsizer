@@ -34,3 +34,5 @@ bin/
 
 .DS_Store
 ~$*.xlsx
+
+.commitlint

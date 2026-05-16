@@ -8,7 +8,7 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-func createTmpFile(tmpFile string, data []string) (func(), error) {
+func createTmpFile(tmpFile string, data []string) (func() error, error) {
 	f := excelize.NewFile()
 	sheet := "Sheet1"
 	header := []string{
@@ -18,21 +18,29 @@ func createTmpFile(tmpFile string, data []string) (func(), error) {
 	}
 	for i, val := range header {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheet, cell, val)
+		if err := f.SetCellValue(sheet, cell, val); err != nil {
+			return nil, err
+		}
 	}
 
 	for i, val := range data {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 2)
-		f.SetCellValue(sheet, cell, val)
+		if err := f.SetCellValue(sheet, cell, val); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := f.SaveAs(tmpFile); err != nil {
 		return nil, err
 	}
 
-	return func() {
-		f.Close()
-		os.Remove(tmpFile) // clean up the temporary file after the test
+	return func() error {
+		err := f.Close()
+		if err != nil {
+			return err
+		}
+
+		return os.Remove(tmpFile) // clean up the temporary file after the test
 	}, nil
 }
 
@@ -95,7 +103,11 @@ func TestReadFromExcel(t *testing.T) {
 		t.Fatalf("Error creating file: %v", err)
 	}
 
-	defer cleanup() // ensure cleanup is called after the test
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Fatalf("Error cleaning up file: %v", err)
+		}
+	}() // ensure cleanup is called after the test
 
 	// 2. test execution
 	reader := ExcelReader{FilePath: tmpFile}
@@ -128,7 +140,11 @@ func TestReadFromExcelNormalizingData(t *testing.T) {
 		t.Fatalf("Error creating file: %v", err)
 	}
 
-	defer cleanup() // ensure cleanup is called after the test
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Fatalf("Error cleaning up file: %v", err)
+		}
+	}() // ensure cleanup is called after the test
 
 	// 2. test execution
 	reader := ExcelReader{FilePath: tmpFile}

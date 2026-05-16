@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+permissions: read-all
+
+jobs:
+  dco-check:
+    name: DCO Check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0        
+      - name: Check DCO
+        uses: tisonkun/actions-dco@f1024cd563550b5632e754df11b7d30b73be54a5 # v1.1
+   
+  commitlint:
+    name: Commitlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.26'
+
+      - name: Install commitlint
+        run: go install github.com/conventionalcommit/commitlint@cbc379cadff4bf80bdb621b556e617cca39e1029 # v0.12.0
+
+      - name: Validate commits
+        run: |
+          # Se è una PR usiamo base..head, se è un push usiamo il range dei commit pushati
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            COMMIT_RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          else
+            # Gestisce il push (dal commit precedente a quello attuale)
+            COMMIT_RANGE="${{ github.event.before }}..${{ github.event.after }}"
+          fi
+
+          # Se prima del push non c'è una storia (es. branch nuovo), controlla solo l'ultimo commit
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            COMMIT_RANGE="-1"
+          fi
+
+          git log --pretty=format:"%s" $COMMIT_RANGE | while read msg; do
+            if [ -n "$msg" ]; then
+              echo "$msg" | commitlint lint --config .commitlint.yaml
+            fi
+          done
+            
+  lint-and-test:
+    name: Code Quality & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.26' 
+          cache: true        
+      
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee  # v9.2.1
+        with:
+          version: latest
+       
+      - name: Run Unit Tests
+        run: go test -race ./... -coverprofile=coverage.out
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354  # v6.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
+          fail_ci_if_error: true
+      
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Run vulnerability scan
+        run: make vulncheck

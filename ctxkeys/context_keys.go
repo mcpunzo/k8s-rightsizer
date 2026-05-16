@@ -8,6 +8,7 @@ const (
 	DryRunKey           contextKey = "dryRun"
 	ResizeOnRecreateKey contextKey = "resizeOnRecreate"
 	NumberOfWorkersKey  contextKey = "numberOfWorkers"
+	UseLimitsKey        contextKey = "useLimits"
 )
 
 // WithDryRun adds the dry run flag to the context.
@@ -51,12 +52,12 @@ func NumberOfWorkersFromContext(ctx context.Context, defaultWorkers int) int {
 
 // WithUseLimits adds the use limits flag to the context.
 func WithUseLimits(ctx context.Context, enabled bool) context.Context {
-	return context.WithValue(ctx, "useLimits", enabled)
+	return context.WithValue(ctx, UseLimitsKey, enabled)
 }
 
 // UseLimitsFromContext retrieves the use limits flag from the context. It returns false if the flag is not set or if the value is not a boolean.
 func UseLimitsFromContext(ctx context.Context) bool {
-	if v, ok := ctx.Value("useLimits").(bool); ok {
+	if v, ok := ctx.Value(UseLimitsKey).(bool); ok {
 		return v
 	}
 	return false

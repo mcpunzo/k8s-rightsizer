@@ -11,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
 
@@ -24,7 +23,7 @@ func TestNewPodService(t *testing.T) {
 	}{
 		{
 			name:   "creates service with non nil client",
-			client: k8sfake.NewSimpleClientset(),
+			client: fake.NewSimpleClientset(),
 		},
 		{
 			name:   "creates service with nil client",
@@ -57,7 +56,7 @@ func TestPodService_Find(t *testing.T) {
 		namespace     string
 		fieldSelector string
 		objects       []runtime.Object
-		reactor       func(client *k8sfake.Clientset)
+		reactor       func(client *fake.Clientset)
 		want          []*Pod
 		wantErr       bool
 		errContains   string
@@ -87,7 +86,7 @@ func TestPodService_Find(t *testing.T) {
 			name:          "failure list pods returns error",
 			namespace:     "default",
 			fieldSelector: "metadata.name=api-0",
-			reactor: func(client *k8sfake.Clientset) {
+			reactor: func(client *fake.Clientset) {
 				client.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 					listAction, ok := action.(k8stesting.ListAction)
 					if !ok {
@@ -111,7 +110,7 @@ func TestPodService_Find(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			client := k8sfake.NewSimpleClientset(tt.objects...)
+			client := fake.NewSimpleClientset(tt.objects...)
 			if tt.reactor != nil {
 				tt.reactor(client)
 			}
