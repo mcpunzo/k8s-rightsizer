@@ -17,11 +17,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25' 
+          go-version: '1.26' 
           cache: true        
       
-      - name: Run Golangci-Lint
-        run: make lint
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: stable
        
       - name: Run Unit Tests
         run: make test
@@ -36,7 +38,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Run vulnerability scan
