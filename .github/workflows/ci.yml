@@ -7,6 +7,38 @@ on:
     branches: [ main, develop ]
 
 jobs:
+  dco-check:
+    name: DCO Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0        
+      - name: Check DCO
+        uses: tisonkun/actions-dco@v1
+   
+  commitlint:
+    name: Commitlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Install commitlint
+        run: go install github.com/conventionalcommit/commitlint@latest
+
+      - name: Validate commits
+        run: |
+          commitlint lint \
+            --config commitlint.yaml \
+            --from ${{ github.event.pull_request.base.sha }} \
+            --to ${{ github.event.pull_request.head.sha }}
+            
   lint-and-test:
     name: Code Quality & Unit Tests
     runs-on: ubuntu-latest

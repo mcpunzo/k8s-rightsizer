@@ -1,3 +1,10 @@
+[![CI](https://github.com/org/repo/actions/workflows/ci.yml/badge.svg)]()
+[![Go Report Card](https://goreportcard.com/badge/github.com/org/repo)]()
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/org/repo/badge)]()
+[![codecov](https://codecov.io/gh/org/repo/badge.svg)]()
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)]()
+
+
 # K8s Rightsizer
 
 A robust Kubernetes automation tool designed to apply resource recommendations (CPU/Memory) to **Deployments** and **StatefulSets** with an integrated **automatic rollback mechanism**.
