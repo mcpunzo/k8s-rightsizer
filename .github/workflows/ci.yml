@@ -58,7 +58,14 @@ jobs:
           version: latest
        
       - name: Run Unit Tests
-        run: make test
+        run: go test -race ./... -coverprofile=coverage.out
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
+          fail_ci_if_error: true
       
   security-scan:
     name: Security Vulnerability Scan
