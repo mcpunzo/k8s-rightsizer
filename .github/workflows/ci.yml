@@ -15,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0        
       - name: Check DCO
-        uses: tisonkun/actions-dco@v1
+        uses: tisonkun/actions-dco@v1.1
    
   commitlint:
     name: Commitlint
