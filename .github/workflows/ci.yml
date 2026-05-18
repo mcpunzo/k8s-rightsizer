@@ -34,10 +34,12 @@ jobs:
 
       - name: Validate commits
         run: |
-          commitlint lint \
-            --config commitlint.yaml \
-            --from ${{ github.event.pull_request.base.sha }} \
-            --to ${{ github.event.pull_request.head.sha }}
+          git log \
+            --pretty=format:"%s" \
+            ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} \
+          | while read msg; do
+              echo "$msg" | commitlint lint --config commitlint.yaml
+            done
             
   lint-and-test:
     name: Code Quality & Unit Tests
