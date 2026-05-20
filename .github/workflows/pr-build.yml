@@ -1,8 +1,11 @@
 name: PR Image Validation & Scan
-
+  
 on:
   pull_request:
     branches: [ develop, main ]
+
+permissions:
+  contents: read
 
 jobs:
   validate-and-scan:
@@ -10,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Build Docker Image via Makefile
         run: make image-build TAG=pr-scan
