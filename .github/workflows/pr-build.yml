@@ -4,8 +4,7 @@ on:
   pull_request:
     branches: [ develop, main ]
 
-permissions:
-  contents: read
+permissions: read-all
 
 jobs:
   validate-and-scan:
