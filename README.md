@@ -1,3 +1,10 @@
+[![CI](https://github.com/mcpunzo/k8s-rightsizer/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/mcpunzo/k8s-rightsizer/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mcpunzo/k8s-rightsizer)]()
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/mcpunzo/k8s-rightsizer/badge)](https://scorecard.dev/viewer/?uri=github.com/mcpunzo/k8s-rightsizer)
+[![codecov](https://codecov.io/gh/mcpunzo/k8s-rightsizer/badge.svg)](https://codecov.io/gh/mcpunzo/k8s-rightsizer)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)]()
+
+
 # K8s Rightsizer
 
 A robust Kubernetes automation tool designed to apply resource recommendations (CPU/Memory) to **Deployments** and **StatefulSets** with an integrated **automatic rollback mechanism**.

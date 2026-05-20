@@ -6,16 +6,53 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+permissions:
+  contents: read
+
 jobs:
+  dco-check:
+    name: DCO Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0        
+      - name: Check DCO
+        uses: tisonkun/actions-dco@v1.1
+   
+  commitlint:
+    name: Commitlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6.4.0
+        with:
+          go-version: '1.26'
+
+      - name: Install commitlint
+        run: go install github.com/conventionalcommit/commitlint@latest
+
+      - name: Validate commits
+        run: |
+          git log \
+            --pretty=format:"%s" \
+            ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} \
+          | while read msg; do
+              echo "$msg" | commitlint lint --config .commitlint.yaml
+            done
+            
   lint-and-test:
     name: Code Quality & Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.26' 
           cache: true        
@@ -26,17 +63,24 @@ jobs:
           version: latest
        
       - name: Run Unit Tests
-        run: make test
+        run: go test -race ./... -coverprofile=coverage.out
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
+          fail_ci_if_error: true
       
   security-scan:
     name: Security Vulnerability Scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.26'
           cache: true
