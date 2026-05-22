@@ -5,9 +5,7 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: read
-  packages: write
+permissions: read-all
 
 jobs:
   build-and-push:
@@ -15,38 +13,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd #v6.0.2
 
       - name: Set up Go
-        uses: actions/setup-go@v6.4.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c #v6.4.0
         with:
           go-version: '1.26'
+      
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a #v 4.0.0
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # 4.1.0
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4.1.0
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee #v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Tag Name
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Build Docker Image
-        run: |
-          make image-build IMG=ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.get_version.outputs.VERSION }}
-    
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        permissions:
+          contents: write
+          packages: write
         with:
-          image-ref: 'ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.get_version.outputs.VERSION }}'
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: 'ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.github.ref_name }}'
           format: 'table'
           exit-code: '1' # fail if critical or high vulnerabilities are found
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
-
-      - name: Push Image to GHCR
-        run: |
-          docker push ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.get_version.outputs.VERSION }}
