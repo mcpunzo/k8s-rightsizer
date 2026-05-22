@@ -1,5 +1,3 @@
-> **Note**: Please target the `develop` branch. Pull requests to `main` are reserved for maintainers.
-
 ## Description
 
 Briefly describe the problem and why this change is needed.
