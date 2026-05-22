@@ -1,6 +1,6 @@
 module github.com/mcpunzo/k8s-rightsizer
 
-go 1.25.0
+go 1.26.3
 
 require (
 	github.com/xuri/excelize/v2 v2.10.1
