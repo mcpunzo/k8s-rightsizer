@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -29,24 +29,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Tag Name
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker Image
-        run: |
-          make image-build IMG=ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.get_version.outputs.VERSION }}
-    
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: 'ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.get_version.outputs.VERSION }}'
+          image-ref: 'ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.github.ref_name }}'
           format: 'table'
           exit-code: '1' # fail if critical or high vulnerabilities are found
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
-
-      - name: Push Image to GHCR
-        run: |
-          docker push ghcr.io/${{ github.repository_owner }}/k8s-rightsizer:${{ steps.get_version.outputs.VERSION }}
