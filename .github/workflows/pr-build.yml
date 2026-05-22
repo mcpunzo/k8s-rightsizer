@@ -12,13 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6.0
 
       - name: Build Docker Image via Makefile
         run: make image-build TAG=pr-scan
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@v0.36
         with:
           image-ref: 'localhost/k8s-rightsizer:pr-scan'
           format: 'table'

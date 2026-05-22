@@ -97,7 +97,7 @@ undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))
 	kubectl delete ns k8s-rightsizer
 
 .PHONY: vulncheck
-vulncheck: $(GOVULNCHECK)
+vulncheck: $(GOVULNCHECK) ## Run govulncheck to check for vulnerabilities in dependencies
 	@echo "🔍 Running govulncheck..."
 	@$(GOVULNCHECK) ./...
 
@@ -106,8 +106,13 @@ $(GOVULNCHECK):
 	@echo "📥 govulncheck not found. Installing..."
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 
-echo:
-	@echo "$(IMG)"
+.PHONY: changelog changelog-latest
+changelog-all: ## Generate complete CHANGELOG.md (requires git cliff)
+	git cliff --output CHANGELOG.md
+
+changelog: ## Generate only the latest changes since the last tag (requires git cliff)
+	git cliff --latest --output CHANGELOG.md
+
 
 .PHONY: all
 all: image-build image-push deploy ## Perform all steps: build, push, and deploy
