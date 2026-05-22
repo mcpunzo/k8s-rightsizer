@@ -5,9 +5,7 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-  packages: write
+permissions: read-all
 
 jobs:
   build-and-push:
@@ -39,6 +37,9 @@ jobs:
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7.2.2
+        permissions:
+          contents: write
+          packages: write
         with:
           version: latest
           args: release --clean
