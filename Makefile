@@ -99,7 +99,7 @@ undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))
 .PHONY: vulncheck
 vulncheck: $(GOVULNCHECK) ## Run govulncheck to check for vulnerabilities in dependencies
 	@echo "🔍 Running govulncheck..."
-	@$(GOVULNCHECK) ./...
+	@$(GOVULNCHECK) -show verbose ./...
 
 # Install govulncheck if not present in GOPATH
 $(GOVULNCHECK):
