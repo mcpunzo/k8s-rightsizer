@@ -14,7 +14,7 @@ if command -v docker >/dev/null 2>&1; then
 elif command -v podman >/dev/null 2>&1; then
     DETECTED_DRIVER="podman"
 else
-    echo "❌ Errore: Né Docker né Podman sono installati."
+    echo "❌ Error: Neither Docker nor Podman is installed."
     exit 1
 fi
 

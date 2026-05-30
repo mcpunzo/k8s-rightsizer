@@ -37,15 +37,14 @@ jobs:
 
       - name: Validate commits
         run: |
-          # Se è una PR usiamo base..head, se è un push usiamo il range dei commit pushati
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             COMMIT_RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
           else
-            # Gestisce il push (dal commit precedente a quello attuale)
+            # Handles push events (from the previous commit to the current one)
             COMMIT_RANGE="${{ github.event.before }}..${{ github.event.after }}"
           fi
 
-          # Se prima del push non c'è una storia (es. branch nuovo), controlla solo l'ultimo commit
+          # If there is no history before the push (e.g., new branch), check only the last commit
           if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
             COMMIT_RANGE="-1"
           fi

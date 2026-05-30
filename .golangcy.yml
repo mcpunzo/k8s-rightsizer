@@ -5,19 +5,21 @@ run:
 linters:
   disable-all: true
   enable:
-    - errcheck      # Verifica che gli errori siano gestiti
-    - gosimple      # Suggerisce semplificazioni del codice
-    - govet         # Report di potenziali problemi strutturali
-    - ineffassign   # Rileva assegnazioni inutilizzate
-    - staticcheck   # Analisi statica avanzata (il top)
-    - unused        # Trova codice, costanti o funzioni inutilizzate
-    - gocyclo       # Controlla la complessità ciclimatica (funzioni troppo lunghe)
-    - revive        # Sostituto moderno di golint (regole di stile)
-    - gofmt         # Verifica la formattazione nativa di Go
+    - errcheck      # check error return values
+    - gofmt         # check code formatting
+    - goimports     # check import formatting
+    - gosimple      # Suggests code simplifications
+    - govet         # Reports potential structural issues
+    - ineffassign   # Detects unused assignments
+    - staticcheck   # Advanced static analysis (the top)
+    - unused        # Finds unused code, constants, or functions
+    - gocyclo       # Checks cyclomatic complexity (too long functions)
+    - revive        # Modern replacement for golint (style rules)
+    - gofmt         # Verifies native Go formatting
 
 linters-settings:
   gocyclo:
-    min-complexity: 15 # Se una funzione ha complessità > 15, va spezzata
+    min-complexity: 15 # If a function has complexity > 15, it should be split into smaller functions
 
 issues:
   exclude-use-default: false

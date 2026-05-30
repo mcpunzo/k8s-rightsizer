@@ -109,7 +109,7 @@ $(GOVULNCHECK):
 .PHONY: changelog
 changelog:
 ifndef VERSION
-	$(error VERSION non definita. Usa: make changelog VERSION=v0.3.0)
+	$(error VERSION not defined. Use: make changelog VERSION=v0.3.0)
 endif
 	git cliff --unreleased --tag $(VERSION) --output CHANGELOG.md
 
