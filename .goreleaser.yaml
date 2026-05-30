@@ -58,6 +58,5 @@ release:
   github:
     owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
     name: k8s-rightsizer
-  release_notes_file: CHANGELOG.md
   draft: false
   prerelease: auto
