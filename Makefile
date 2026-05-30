@@ -106,13 +106,12 @@ $(GOVULNCHECK):
 	@echo "📥 govulncheck not found. Installing..."
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 
-.PHONY: changelog changelog-latest
-changelog-all: ## Generate complete CHANGELOG.md (requires git cliff)
-	git cliff --output CHANGELOG.md
-
-changelog: ## Generate only the latest changes since the last tag (requires git cliff)
-	git cliff --latest --output CHANGELOG.md
-
+.PHONY: changelog
+changelog:
+ifndef VERSION
+	$(error VERSION non definita. Usa: make changelog VERSION=v0.3.0)
+endif
+	git cliff --unreleased --tag $(VERSION) --output CHANGELOG.md
 
 .PHONY: all
 all: image-build image-push deploy ## Perform all steps: build, push, and deploy

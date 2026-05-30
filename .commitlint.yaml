@@ -36,6 +36,7 @@ settings:
     - ci
     - chore
     - revert
+    - sec
     flags: {}
   scope-enum:
     argument:
