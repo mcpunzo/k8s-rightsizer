@@ -2,12 +2,15 @@
 
 # Check for container engine (podman or docker)
 CONTAINER_ENGINE ?= $(shell which docker >/dev/null 2>&1 && echo docker || echo podman)
+GOPATH=$(shell go env GOPATH)
+GOVULNCHECK=$(GOPATH)/bin/govulncheck
+GOLANGCI_LINT=$(GOPATH)/bin/golangci-lint
 
 # Variables
 APP_NAME := k8s-rightsizer
 REGISTRY_USER ?= localhost
-VERSION ?=local
-IMG := $(REGISTRY_USER)/$(APP_NAME):$(VERSION)
+TAG ?=local
+IMG := $(REGISTRY_USER)/$(APP_NAME):$(TAG)
 ENV ?= local
 RESIZE_ON_RECREATE ?= false
 DRY_RUN ?= false
@@ -36,12 +39,17 @@ clean: ## Clean build artifacts
 .PHONY: test
 test: clean ## Run tests
 	@echo "Running tests..."
-	go test -v --cover ./...
+	go test -race -v --cover ./...
 
-.PHONY: vet
-vet: ## Run static analysis
-	@echo "Static check..."
-	go vet ./...
+.PHONY: lint
+lint: $(GOLANGCI_LINT)
+	@echo "🔬 Running golangci-lint..."
+	@$(GOLANGCI_LINT) run ./...
+
+$(GOLANGCI_LINT):
+	@echo "📥 golangci-lint not found. Installing..."
+	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin
+
 
 .PHONY: build-bin
 build-bin: ## Build the binary
@@ -59,7 +67,7 @@ image-push: ## Push the image to the registry
 	$(CONTAINER_ENGINE) push $(IMG)
 
 .PHONY: deploy
-deploy: ## Deploy with Helm (usage: make deploy [ENV=local|dev] [REGISTRY_USER=your-registry-user] [VERSION=your-version])
+deploy: ## Deploy with Helm (usage: make deploy [ENV=local|dev] [REGISTRY_USER=your-registry-user] [TAG=your-tag-version])
 ifeq ($(ENV),local)
 	@echo "📦 Exporting image for local deployment..."
 	$(CONTAINER_ENGINE) save $(IMG) -o rightsizer.tar
@@ -75,7 +83,7 @@ endif
 		-f ./k8s-rightsizer-helm/values.yaml \
 		-f ./k8s-rightsizer-helm/$(ENV)/values.yaml \
 		--set image.repository=$(REGISTRY_USER)/$(APP_NAME) \
-		--set image.tag=$(VERSION) \
+		--set image.tag=$(TAG) \
 		--set settings.dryRun=$(DRY_RUN) \
 		--set settings.resizeOnRecreate=$(RESIZE_ON_RECREATE) \
 		--set settings.workers="$(WORKERS)" \
@@ -88,10 +96,22 @@ undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))
 	helm uninstall $(APP_NAME) --namespace k8s-rightsizer
 	kubectl delete ns k8s-rightsizer
 
+.PHONY: vulncheck
+vulncheck: $(GOVULNCHECK) ## Run govulncheck to check for vulnerabilities in dependencies
+	@echo "🔍 Running govulncheck..."
+	@$(GOVULNCHECK) -show verbose ./...
 
+# Install govulncheck if not present in GOPATH
+$(GOVULNCHECK):
+	@echo "📥 govulncheck not found. Installing..."
+	@go install golang.org/x/vuln/cmd/govulncheck@latest
 
-echo:
-	@echo "$(IMG)"
+.PHONY: changelog
+changelog:
+ifndef VERSION
+	$(error VERSION non definita. Usa: make changelog VERSION=v0.3.0)
+endif
+	git cliff --unreleased --tag $(VERSION) --output CHANGELOG.md
 
 .PHONY: all
 all: image-build image-push deploy ## Perform all steps: build, push, and deploy

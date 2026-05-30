@@ -1,3 +1,10 @@
+[![CI](https://github.com/mcpunzo/k8s-rightsizer/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/mcpunzo/k8s-rightsizer/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mcpunzo/k8s-rightsizer)]()
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/mcpunzo/k8s-rightsizer/badge)](https://scorecard.dev/viewer/?uri=github.com/mcpunzo/k8s-rightsizer)
+[![codecov](https://codecov.io/gh/mcpunzo/k8s-rightsizer/badge.svg)](https://codecov.io/gh/mcpunzo/k8s-rightsizer)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)]()
+
+
 # K8s Rightsizer
 
 A robust Kubernetes automation tool designed to apply resource recommendations (CPU/Memory) to **Deployments** and **StatefulSets** with an integrated **automatic rollback mechanism**.
@@ -17,7 +24,7 @@ The tool reads a list of recommendations from an Excel file, applies them, and m
 
 * **Kubernetes Cluster** (v1.34+)
 * **Helm** (v4.1+)
-* **Go** (v1.25+) - *Only for local development*
+* **Go** (v1.26+) - *Only for local development*
 * **Make**
 * **Podman or Docker**
 
@@ -52,7 +59,7 @@ Minikube needs the image in its internal registry. When using Podman, the most r
 
 ```bash
 # 1. Build the image with a local tag
-make image-build REGISTRY_USER=localhost VERSION=local
+make image-build REGISTRY_USER=localhost TAG=local
 
 # 2. Load image into Minikube and deploy via helm
 make deploy
@@ -72,7 +79,7 @@ make undeploy
 ```bash
 #1. set env variables
 export REGISTRY_USER=<registry_user>
-export VERSION=<image_ver>
+export TAG=<image_ver>
 
 #2. build and push the image to your image registry
 make image-build  
@@ -99,8 +106,8 @@ Below is a list of all the parameters of the k8s-rightsizer. You can use them by
 | Parameter            | Value       | Default   | Description                                                      |
 |----------------------|-------------|-----------|------------------------------------------------------------------|
 | REGISTRY_USER        |             | localhost | The Container Registry                                           |
-| VERSION              |             | local     | Version of the container image                                   |
-| IMG                  | $(REGISTRY_USER)/k8s-rightsizer:$(VERSION) |           | Container image name and tag                                     |
+| TAG              |             | local     | Tag version of the container image                                   |
+| IMG                  | $(REGISTRY_USER)/k8s-rightsizer:$(TAG) |           | Container image name and tag                                     |
 | ENV                  | local \| dev  | local     | The tool execution environment                                   |
 | RESIZE_ON_RECREATE   | true \| false | false     | Whether to resize workload with update strategy Recreate         |
 | DRY_RUN              | true \| false | false     | Plan the execution without resizing containers                   |
