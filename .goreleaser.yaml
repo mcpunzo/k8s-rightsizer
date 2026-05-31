@@ -7,7 +7,15 @@ before:
     - go mod tidy
 
 builds:
-  - skip: true    # build is managed by the Dockerfile
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: ./cmd/main.go
+    binary: k8s-rightsizer
 
 dockers:
   - id: k8s-rightsizer-amd64
@@ -17,13 +25,14 @@ dockers:
       - ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/k8s-rightsizer:{{ .Tag }}-amd64
     dockerfile: Dockerfile
     use: buildx
+    context: .
     build_flag_templates:
       - --platform=linux/amd64
       - --label=org.opencontainers.image.title={{ .ProjectName }}
       - --label=org.opencontainers.image.version={{ .Version }}
-      - --label=org.opencontainers.image.revision={{ .Commit }}
-      - --label=org.opencontainers.image.created={{ .Date }}
-      - --label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/k8s-rightsizer
+    files:
+      - bin_path: "{{ .Path }}"
+        dst: k8s-rightsizer
 
   - id: k8s-rightsizer-arm64
     goos: linux
@@ -32,13 +41,14 @@ dockers:
       - ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/k8s-rightsizer:{{ .Tag }}-arm64
     dockerfile: Dockerfile
     use: buildx
+    context: .
     build_flag_templates:
       - --platform=linux/arm64
       - --label=org.opencontainers.image.title={{ .ProjectName }}
       - --label=org.opencontainers.image.version={{ .Version }}
-      - --label=org.opencontainers.image.revision={{ .Commit }}
-      - --label=org.opencontainers.image.created={{ .Date }}
-      - --label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/k8s-rightsizer
+    files:
+      - bin_path: "{{ .Path }}"
+        dst: k8s-rightsizer
 
 docker_manifests:
   - name_template: ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/k8s-rightsizer:{{ .Tag }}
