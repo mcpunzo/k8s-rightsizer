@@ -55,7 +55,7 @@ build-bin: ## Build the binary
 	CGO_ENABLED=0 GOOS=linux go build -o bin/$(APP_NAME) cmd/main.go
 
 .PHONY: image-build
-image-build: ## Build the image
+image-build: build-bin ## Build the image
 	@echo "Building image..."
 	$(CONTAINER_ENGINE) build -t $(IMG) .
 
