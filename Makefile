@@ -1,5 +1,3 @@
-# Makefile for k8s-rightsizer project
-
 # Check for container engine (podman or docker)
 CONTAINER_ENGINE ?= $(shell which docker >/dev/null 2>&1 && echo docker || echo podman)
 GOPATH=$(shell go env GOPATH)
