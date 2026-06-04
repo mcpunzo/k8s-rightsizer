@@ -5,9 +5,11 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)]()
 
 
-# K8s Rightsizer
+# K8s-Rightsizer
 
-A robust Kubernetes automation tool designed to apply resource recommendations (CPU/Memory) to **Deployments** and **StatefulSets** with an integrated **automatic rollback mechanism**.
+Automated Kubernetes workload rightsizing tool designed to apply resource recommendations (CPU/Memory) to **workloads** with with built-in **automatic rollback mechanism**.
+
+# Why K8s-Rightsizer
 
 The tool reads a list of recommendations from an Excel file, applies them, and monitors the rollout. If a Pod fails to start (OOMKilled, CrashLoopBackOff, Unschedulable, etc.), it immediately restores the previous stable configuration.
 
@@ -18,6 +20,21 @@ The tool reads a list of recommendations from an Excel file, applies them, and m
 * **Smart Monitoring**: Detects `OOMKilled`, `CrashLoopBackOff`, and `Insufficient Resources` in real-time.
 * **Cross-Controller Support**: Works seamlessly with both Deployments and StatefulSets.
 * **Helm Powered**: Easy distribution and configuration for Local and Remote environments.
+
+## Real-World Results
+ 
+Kalipr has been running on production EKS clusters, applying rightsizing recommendations with zero downtime. Results are measured on daily cost with a clear before/after drop post-deployment.
+ 
+| Cluster | Period | Cost Reduction |
+|---------|--------|----------------|
+| EKS Cluster A | 30 days | **-36%** |
+| EKS Cluster B | 30 days | **-23%** |
+ 
+> Savings are calculated on actual daily cloud spend. The cost drop is directly correlated with Kalipr's deployment, with no other optimization changes applied in the same period.
+ 
+Currently scaling to 9 additional clusters, with ~60 more planned.
+ 
+---
 
 
 ## 🛠 Prerequisites
@@ -183,7 +200,7 @@ If a failure is detected, the tool immediately aborts the monitoring and initiat
 ## 📊 Logic Flowchart
 
 1. **START** ➔ Read row from Excel.
-2. **RETRIEVE** ➔ Retrieve current `resourcee`.
+2. **RETRIEVE** ➔ Retrieve current `resources`.
 3. **PRECHECK** ➔ Check current `resources` conditions 
 4. **BACKUP** ➔ Create current `resources` backup.
 5. **PATCH** ➔ Apply new `resources`.
