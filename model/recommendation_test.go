@@ -4,6 +4,39 @@ import (
 	"testing"
 )
 
+func TestRecommendation_WorkloadID(t *testing.T) {
+	rec := &Recommendation{
+		Environment:  "production",
+		Namespace:    "billing",
+		Kind:         "Deployment",
+		WorkloadName: "api-server",
+	}
+
+	got := rec.WorkloadID()
+	want := "production-billing-Deployment-api-server"
+
+	if got != want {
+		t.Fatalf("WorkloadID() = %q, want %q", got, want)
+	}
+}
+
+func TestRecommendation_ContainerID(t *testing.T) {
+	rec := &Recommendation{
+		Environment:  "production",
+		Namespace:    "billing",
+		Kind:         "Deployment",
+		WorkloadName: "api-server",
+		Container:    "app-container",
+	}
+
+	got := rec.ContainerID()
+	want := "production-billing-Deployment-api-server-app-container"
+
+	if got != want {
+		t.Fatalf("ContainerID() = %q, want %q", got, want)
+	}
+}
+
 func TestRecommendation_DeepCopy(t *testing.T) {
 	original := &Recommendation{
 		Environment:                 "production",
