@@ -12,6 +12,7 @@ import (
 	"github.com/mcpunzo/k8s-rightsizer/recommendation/reader"
 	re "github.com/mcpunzo/k8s-rightsizer/resizeengine"
 	"github.com/mcpunzo/k8s-rightsizer/watcher"
+	"github.com/mcpunzo/k8s-rightsizer/watcher/listner"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -64,6 +65,10 @@ func main() {
 
 	// 3. Execute Engine
 	resizeWatcher := watcher.NewResizeWatcher()
+	resizeIndicator := listner.NewResizeIndicator(len(recs))
+	if err := resizeWatcher.AddListener(resizeIndicator); err != nil {
+		log.Fatalf("Error adding listener: %v", err)
+	}
 
 	var resizer re.Resizer
 	switch *resizeStrategy {
