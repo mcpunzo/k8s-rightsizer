@@ -10,6 +10,7 @@ import (
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
 	"github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/sharding"
+	"github.com/mcpunzo/k8s-rightsizer/watcher"
 )
 
 // ContainerResizer is an implementation of the Resizer interface that processes recommendations and performs resizing operations on Kubernetes workloads at the container level, allowing for more granular control over resource adjustments.
@@ -19,8 +20,9 @@ type ContainerResizer struct {
 
 // NewContainerResizer creates a new instance of ContainerResizer with the provided Kubernetes client.
 // param client: The Kubernetes client used to interact with the cluster.
+// param resizeWatcher: The ResizeWatcher used to monitor resize events.
 // returns: A pointer to a new instance of ContainerResizer.
-func NewContainerResizer(client k8s.K8sClient) *ContainerResizer {
+func NewContainerResizer(client k8s.K8sClient, resizeWatcher *watcher.ResizeWatcher) *ContainerResizer {
 	return &ContainerResizer{
 		BaseResizer: BaseResizer{
 			client:              client,
@@ -28,6 +30,7 @@ func NewContainerResizer(client k8s.K8sClient) *ContainerResizer {
 			statefulSetWorkload: k8s.NewStatefulSetWorkload(client),
 			podSvc:              k8s.NewPodService(client),
 			nodeSvc:             k8s.NewNodeService(client),
+			resizeWatcher:       resizeWatcher,
 		},
 	}
 }
@@ -102,6 +105,8 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			workloadSvc, err := r.lookupWorkloadOps(rec.Kind)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
+				resizeEvent := watcher.CreateResizeEvent([]*model.Recommendation{rec}, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
@@ -111,6 +116,8 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			workload, err := workloadSvc.FindWorkload(ctx, rec)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
+				resizeEvent := watcher.CreateResizeEvent([]*model.Recommendation{rec}, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
@@ -119,6 +126,8 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			log.Printf("Validate recommendations for %s\n", rec.ContainerID())
 			if err := workload.ValidateRecommendations(ctx, rec); err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
+				resizeEvent := watcher.CreateResizeEvent([]*model.Recommendation{rec}, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
@@ -127,6 +136,8 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			err = r.ResizePrecheck(ctx, workloadSvc, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
+				resizeEvent := watcher.CreateResizeEvent([]*model.Recommendation{rec}, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
@@ -135,6 +146,8 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			err = r.NodeCheck(ctx, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
+				resizeEvent := watcher.CreateResizeEvent([]*model.Recommendation{rec}, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
@@ -143,11 +156,15 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			err = r.ApplyResize(ctx, []*model.Recommendation{rec}, workloadSvc, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", rec.ContainerID(), err)
+				resizeEvent := watcher.CreateResizeEvent([]*model.Recommendation{rec}, watcher.ResizeFailed, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
 
 			okMsg := fmt.Sprintf("[OK] Resource resized for %s", rec.ContainerID())
+			resizeEvent := watcher.CreateResizeEvent([]*model.Recommendation{rec}, watcher.ResizeSucceeded, okMsg)
+			r.resizeWatcher.Notify(resizeEvent)
 			results <- okMsg
 
 			select {

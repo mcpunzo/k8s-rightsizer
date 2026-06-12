@@ -2,6 +2,8 @@ package watcher
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 )
 
 // Listener is an interface that defines a method to handle resize events.
@@ -13,6 +15,7 @@ type Listener interface {
 // ResizeWatcher is a struct that represents an event watcher for resize events.
 type ResizeWatcher struct {
 	listeners []Listener
+	lock      *sync.RWMutex
 }
 
 var (
@@ -25,6 +28,7 @@ var (
 func NewResizeWatcher() *ResizeWatcher {
 	return &ResizeWatcher{
 		listeners: make([]Listener, 0),
+		lock:      &sync.RWMutex{},
 	}
 }
 
@@ -34,6 +38,8 @@ func (w *ResizeWatcher) AddListener(listener Listener) error {
 	if listener == nil {
 		return NilListenerError
 	}
+	w.lock.Lock()
+	defer w.lock.Unlock()
 	w.listeners = append(w.listeners, listener)
 	return nil
 }
@@ -41,7 +47,19 @@ func (w *ResizeWatcher) AddListener(listener Listener) error {
 // Notify notifies all registered listeners of a resize event.
 // param event The resize event to be sent to the listeners.
 func (w *ResizeWatcher) Notify(event *ResizeEvent) {
-	for _, listener := range w.listeners {
-		listener.HandleResizeEvent(event)
+	w.lock.RLock()
+	listeners := append([]Listener(nil), w.listeners...)
+	w.lock.RUnlock()
+
+	for _, listener := range listeners {
+		func(listener Listener) {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("[Crash Alert] panic caught for listener %T: %v\n", listener, r)
+				}
+			}()
+
+			listener.HandleResizeEvent(event)
+		}(listener)
 	}
 }

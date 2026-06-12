@@ -11,6 +11,7 @@ import (
 	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/recommendation/reader"
 	re "github.com/mcpunzo/k8s-rightsizer/resizeengine"
+	"github.com/mcpunzo/k8s-rightsizer/watcher"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -62,13 +63,14 @@ func main() {
 	log.Printf("Recommendations read: %v", len(recs))
 
 	// 3. Execute Engine
+	resizeWatcher := watcher.NewResizeWatcher()
 
 	var resizer re.Resizer
 	switch *resizeStrategy {
 	case "container":
-		resizer = re.NewContainerResizer(k8sClient)
+		resizer = re.NewContainerResizer(k8sClient, resizeWatcher)
 	case "workload":
-		resizer = re.NewWorkloadResizer(k8sClient)
+		resizer = re.NewWorkloadResizer(k8sClient, resizeWatcher)
 	default:
 		log.Fatalf("Invalid resize strategy: %v", *resizeStrategy)
 	}
