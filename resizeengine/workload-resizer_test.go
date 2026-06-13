@@ -7,6 +7,7 @@ import (
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
+	"github.com/mcpunzo/k8s-rightsizer/watcher"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -69,6 +70,10 @@ func wrReadyNode(name, arch string) *corev1.Node {
 			Status: corev1.ConditionTrue,
 		}}},
 	}
+}
+
+func newTestWorkloadResizer(objs ...runtime.Object) *WorkloadResizer {
+	return NewWorkloadResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher())
 }
 
 // --- TestWorkloadResizer_ArrangeRecsByWorkload ---
@@ -135,11 +140,22 @@ func TestWorkloadResizer_ArrangeRecsByWorkload(t *testing.T) {
 				"-default-StatefulSet-api": 1,
 			},
 		},
+		{
+			name: "Same workload with different environments are distinct",
+			recs: []model.Recommendation{
+				{Environment: "dev", Namespace: "default", WorkloadName: "api", Container: "app", Kind: model.Deployment},
+				{Environment: "prod", Namespace: "default", WorkloadName: "api", Container: "app", Kind: model.Deployment},
+			},
+			wantCounts: map[string]int{
+				"dev-default-Deployment-api":  1,
+				"prod-default-Deployment-api": 1,
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := NewWorkloadResizer(fake.NewSimpleClientset())
+			r := newTestWorkloadResizer()
 			got := r.arrangeRecsByWorkload(tt.recs)
 
 			if len(got) != len(tt.wantCounts) {
@@ -233,7 +249,7 @@ func TestWorkloadResizer_ValidateRecommendation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := NewWorkloadResizer(fake.NewSimpleClientset())
+			r := newTestWorkloadResizer()
 
 			workload := &k8s.Workload{
 				Name: "api",
@@ -338,7 +354,7 @@ func TestWorkloadResizer_ResizeJob(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fakeClient := fake.NewSimpleClientset(tt.k8sObjs...)
-			r := NewWorkloadResizer(fakeClient)
+			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher())
 
 			ctx := context.Background()
 			if tt.cancelCtx {
@@ -416,6 +432,13 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "Success - zero workers with empty recommendations",
+			recs:    []model.Recommendation{},
+			k8sObjs: []runtime.Object{},
+			workers: 0,
+			wantErr: false,
+		},
+		{
 			name: "Success - unsupported kind skipped without error",
 			recs: []model.Recommendation{
 				{Namespace: "default", WorkloadName: "cj", Container: "app", Kind: "CronJob",
@@ -446,7 +469,7 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fakeClient := fake.NewSimpleClientset(tt.k8sObjs...)
-			r := NewWorkloadResizer(fakeClient)
+			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher())
 
 			err := r.Resize(context.Background(), tt.recs, tt.workers)
 

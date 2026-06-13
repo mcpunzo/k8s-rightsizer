@@ -10,6 +10,7 @@ import (
 	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	"github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
+	"github.com/mcpunzo/k8s-rightsizer/watcher"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -66,6 +67,10 @@ func stableStatus() *k8s.WorkloadStatus {
 		ExpectedReplicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1,
 		Generation: 1, ObservedGeneration: 1,
 	}
+}
+
+func newTestContainerResizer(objs ...runtime.Object) *ContainerResizer {
+	return NewContainerResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher())
 }
 
 // --- TESTS ---
@@ -204,7 +209,7 @@ func TestContainerResizer_ResizeWorkload(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := NewContainerResizer(fake.NewSimpleClientset())
+			r := newTestContainerResizer()
 
 			var workload *k8s.Workload
 			if tt.ops.findFunc != nil {
@@ -381,7 +386,7 @@ func TestContainerResizer_ResizePrecheck(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := NewContainerResizer(fake.NewSimpleClientset(tt.extraObjs...))
+			r := newTestContainerResizer(tt.extraObjs...)
 
 			ctx := context.Background()
 			for k, v := range tt.ctxValues {
@@ -516,7 +521,7 @@ func TestContainerResizer_CheckPodCriticalErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := NewContainerResizer(fake.NewSimpleClientset(tt.pods...))
+			r := newTestContainerResizer(tt.pods...)
 			workload := &k8s.Workload{
 				Namespace:     "default",
 				LabelSelector: &metav1.LabelSelector{MatchLabels: appLabels},
@@ -611,7 +616,7 @@ func TestContainerResizer_CheckWorkloadStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := NewContainerResizer(fake.NewSimpleClientset(tt.pods...))
+			r := newTestContainerResizer(tt.pods...)
 
 			mOps := &mockWorkloadOps{
 				statusFunc: func() (*k8s.WorkloadStatus, error) { return tt.mockStatus, tt.statusErr },
@@ -727,7 +732,7 @@ func TestContainerResizer_IsPDBTooRestrictive(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := NewContainerResizer(fake.NewSimpleClientset(tt.initialObjs...))
+			r := newTestContainerResizer(tt.initialObjs...)
 
 			got, err := r.IsPDBTooRestrictive(context.Background(), tt.namespace, tt.labelSelector)
 
@@ -850,7 +855,7 @@ func TestContainerResizer_ResizeJob(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r := NewContainerResizer(fake.NewSimpleClientset(tc.initialObjs...))
+			r := newTestContainerResizer(tc.initialObjs...)
 
 			recsChan := make(chan *model.Recommendation, 1)
 			resultsChan := make(chan string, 1)
@@ -941,7 +946,7 @@ func TestContainerResizer_Resize(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := NewContainerResizer(fake.NewSimpleClientset(tt.initialObjs...))
+			r := newTestContainerResizer(tt.initialObjs...)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -953,4 +958,40 @@ func TestContainerResizer_Resize(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestContainerResizer_ResizeJob_ContextCanceledSkipsProcessing(t *testing.T) {
+	t.Parallel()
+
+	r := newTestContainerResizer()
+	recsChan := make(chan *model.Recommendation, 1)
+	resultsChan := make(chan string, 1)
+
+	recsChan <- &model.Recommendation{WorkloadName: "api", Namespace: "default", Kind: model.Deployment, Container: "app"}
+	close(recsChan)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	r.ResizeJob(ctx, recsChan, resultsChan)
+	close(resultsChan)
+
+	if len(resultsChan) != 0 {
+		t.Fatalf("expected no results when context is canceled, got %d", len(resultsChan))
+	}
+}
+
+func TestContainerResizer_Resize_ZeroWorkersPanics(t *testing.T) {
+	t.Parallel()
+
+	r := newTestContainerResizer()
+	recs := []model.Recommendation{{WorkloadName: "api", Namespace: "default", Kind: model.Deployment, Container: "app"}}
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic when numberOfWorkers is 0")
+		}
+	}()
+
+	_ = r.Resize(context.Background(), recs, 0)
 }
