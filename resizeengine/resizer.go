@@ -9,6 +9,7 @@ import (
 	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
+	"github.com/mcpunzo/k8s-rightsizer/watcher"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -29,6 +30,7 @@ type BaseResizer struct {
 	statefulSetWorkload *k8s.StatefulSetWorkload
 	podSvc              *k8s.PodService
 	nodeSvc             *k8s.NodeService
+	resizeWatcher       *watcher.ResizeWatcher
 }
 
 // ResizePrecheck performs pre-checks before resizing the workload, such as checking for PDB restrictions and UpdateStrategy settings.

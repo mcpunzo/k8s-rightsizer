@@ -9,6 +9,7 @@ import (
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
+	"github.com/mcpunzo/k8s-rightsizer/watcher"
 )
 
 // WorkloadResizer is an implementation of the Resizer interface that processes recommendations and performs resizing operations on Kubernetes workloads at the workload level, allowing for more coarse-grained control over resource adjustments.
@@ -18,8 +19,9 @@ type WorkloadResizer struct {
 
 // NewWorkloadResizer creates a new instance of WorkloadResizer with the provided Kubernetes client.
 // param client: The Kubernetes client used to interact with the cluster.
+// param resizeWatcher: The ResizeWatcher used to monitor resize operations.
 // returns: A pointer to a new instance of WorkloadResizer.
-func NewWorkloadResizer(client k8s.K8sClient) *WorkloadResizer {
+func NewWorkloadResizer(client k8s.K8sClient, resizeWatcher *watcher.ResizeWatcher) *WorkloadResizer {
 	return &WorkloadResizer{
 		BaseResizer: BaseResizer{
 			client:              client,
@@ -27,6 +29,7 @@ func NewWorkloadResizer(client k8s.K8sClient) *WorkloadResizer {
 			statefulSetWorkload: k8s.NewStatefulSetWorkload(client),
 			podSvc:              k8s.NewPodService(client),
 			nodeSvc:             k8s.NewNodeService(client),
+			resizeWatcher:       resizeWatcher,
 		},
 	}
 }
@@ -94,6 +97,9 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			workloadSvc, err := r.lookupWorkloadOps(recs[0].Kind)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", recs[0].WorkloadID(), err)
+				resizeEvent := watcher.CreateResizeEvent(recs, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
+			
 				results <- errMsg
 				continue
 			}
@@ -103,6 +109,8 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			workload, err := workloadSvc.FindWorkload(ctx, recs[0])
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", recs[0].WorkloadID(), err)
+				resizeEvent := watcher.CreateResizeEvent(recs, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
@@ -111,6 +119,8 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			newRecs := r.validateRecommendation(ctx, workload, recs)
 			if len(newRecs) == 0 {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: no valid recommendations", workload.Id)
+				resizeEvent := watcher.CreateResizeEvent(recs, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
@@ -119,6 +129,8 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			err = r.ResizePrecheck(ctx, workloadSvc, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", workload.Id, err)
+				resizeEvent := watcher.CreateResizeEvent(recs, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
@@ -127,6 +139,8 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			err = r.NodeCheck(ctx, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", workload.Id, err)
+				resizeEvent := watcher.CreateResizeEvent(recs, watcher.ResizeSkipped, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
@@ -135,11 +149,15 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			err = r.ApplyResize(ctx, newRecs, workloadSvc, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", workload.Id, err)
+				resizeEvent := watcher.CreateResizeEvent(recs, watcher.ResizeFailed, errMsg)
+				r.resizeWatcher.Notify(resizeEvent)
 				results <- errMsg
 				continue
 			}
 
 			okMsg := fmt.Sprintf("[OK] Resource resized for %s", workload.Id)
+			resizeEvent := watcher.CreateResizeEvent(recs, watcher.ResizeSucceeded, okMsg)
+			r.resizeWatcher.Notify(resizeEvent)
 			results <- okMsg
 			select {
 			case <-time.After(30 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
