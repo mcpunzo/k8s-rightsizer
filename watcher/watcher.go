@@ -19,8 +19,8 @@ type ResizeWatcher struct {
 }
 
 var (
-	// NilListenerError is an error that indicates that a nil listener was provided.
-	NilListenerError = errors.New("Listener cannot be nil")
+	// ErrNilListener is an error that indicates that a nil listener was provided.
+	ErrNilListener = errors.New("Listener cannot be nil")
 )
 
 // NewResizeWatcher creates a new instance of ResizeWatcher.
@@ -36,7 +36,7 @@ func NewResizeWatcher() *ResizeWatcher {
 // param listener The listener to be added to the ResizeWatcher.
 func (w *ResizeWatcher) AddListener(listener Listener) error {
 	if listener == nil {
-		return NilListenerError
+		return ErrNilListener
 	}
 	w.lock.Lock()
 	defer w.lock.Unlock()

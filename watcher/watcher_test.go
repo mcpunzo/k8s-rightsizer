@@ -38,7 +38,7 @@ func TestAddListener(t *testing.T) {
 	}{
 		{
 			listener: nil,
-			err:      NilListenerError,
+			err:      ErrNilListener,
 		},
 		{
 			listener: &MockListener{
