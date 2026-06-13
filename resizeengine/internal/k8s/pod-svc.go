@@ -3,10 +3,13 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+const lastTerminationOOMWindow = 30 * time.Minute
 
 type Pod struct {
 	Name      string
@@ -70,6 +73,12 @@ func (s *PodService) CheckPodCriticalErrors(ctx context.Context, workload *Workl
 	}
 
 	for _, p := range pods.Items {
+		// Ignore pods that are terminating or already terminal to avoid stale failures
+		// from old replicas during rollouts.
+		if p.DeletionTimestamp != nil || p.Status.Phase == v1.PodSucceeded || p.Status.Phase == v1.PodFailed {
+			continue
+		}
+
 		// 1. Check if the Pod is stuck in scheduling (Cluster full or insufficient resources)
 		if p.Status.Phase == v1.PodPending {
 			for _, cond := range p.Status.Conditions {
@@ -97,10 +106,29 @@ func (s *PodService) CheckPodCriticalErrors(ctx context.Context, workload *Workl
 			}
 
 			// Check the last termination state (if it crashed recently)
-			if cs.LastTerminationState.Terminated != nil && cs.LastTerminationState.Terminated.Reason == "OOMKilled" {
+			if cs.LastTerminationState.Terminated != nil &&
+				cs.LastTerminationState.Terminated.Reason == "OOMKilled" &&
+				isRecentTermination(cs.LastTerminationState.Terminated, time.Now(), lastTerminationOOMWindow) {
 				return true, "OOMKilled detected in the last restart: Insufficient memory for startup"
 			}
 		}
 	}
 	return false, ""
+}
+
+// isRecentTermination checks if a container termination event occurred within a specified time window. It returns true if the termination event is recent, indicating a potential ongoing issue with insufficient memory for startup.
+// param t: The ContainerStateTerminated object representing the termination event of a container.
+// param now: The current time used as a reference point for determining the recency of the termination event.
+// param window: The duration defining the time window within which a termination event is considered recent.
+// returns: A boolean indicating whether the termination event occurred within the specified time window.
+func isRecentTermination(t *v1.ContainerStateTerminated, now time.Time, window time.Duration) bool {
+	if t == nil {
+		return false
+	}
+
+	if t.FinishedAt.IsZero() {
+		return true
+	}
+
+	return t.FinishedAt.Time.After(now.Add(-window))
 }

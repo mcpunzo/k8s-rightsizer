@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -315,6 +316,65 @@ func TestCheckPodCriticalErrors(t *testing.T) {
 			},
 			wantIsError: true,
 			wantReason:  "OOMKilled detected in the last restart: Insufficient memory for startup",
+		},
+		{
+			name:      "Ignore terminating pod in CrashLoopBackOff",
+			namespace: "default",
+			labels:    map[string]string{"app": "test"},
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "pod-terminating-crash",
+						Namespace:         "default",
+						Labels:            map[string]string{"app": "test"},
+						DeletionTimestamp: func() *metav1.Time { t := metav1.Now(); return &t }(),
+					},
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "container-1",
+								State: corev1.ContainerState{
+									Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantIsError: false,
+			wantReason:  "",
+		},
+		{
+			name:      "Ignore stale last termination OOMKilled",
+			namespace: "default",
+			labels:    map[string]string{"app": "test"},
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-stale-oom",
+						Namespace: "default",
+						Labels:    map[string]string{"app": "test"},
+					},
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "container-1",
+								LastTerminationState: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										Reason:     "OOMKilled",
+										FinishedAt: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+									},
+								},
+								State: corev1.ContainerState{
+									Running: &corev1.ContainerStateRunning{},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantIsError: false,
+			wantReason:  "",
 		},
 	}
 
