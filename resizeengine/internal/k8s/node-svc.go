@@ -61,6 +61,8 @@ func (s *NodeService) Find(ctx context.Context, architecture string) (*NodeStats
 
 		nodeArch := node.Labels["kubernetes.io/arch"]
 
+		// as there is no default, if architecture is not specified, any ready/schedulable node is considered compatible.
+		// this is the same behavior as the default in the pod spec, where if no architecture is specified, any node is considered compatible.
 		if architecture != "" {
 			if nodeArch == architecture {
 				compatibleNodesCount++
