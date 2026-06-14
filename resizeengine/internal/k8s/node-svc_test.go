@@ -75,7 +75,7 @@ func TestNodeService_Find(t *testing.T) {
 			},
 		},
 		{
-			name:         "success empty architecture excludes arm nodes by arch and instance type",
+			name:         "success empty architecture counts all ready schedulable nodes",
 			architecture: "",
 			objects: []runtime.Object{
 				mkNode("node-a", "amd64", "c5.x86", true, false),
@@ -85,7 +85,7 @@ func TestNodeService_Find(t *testing.T) {
 			},
 			want: &NodeStats{
 				NumberOfNodes:        4,
-				CompatibleNodesCount: 1,
+				CompatibleNodesCount: 3,
 				ReadyNodesCount:      3,
 			},
 		},

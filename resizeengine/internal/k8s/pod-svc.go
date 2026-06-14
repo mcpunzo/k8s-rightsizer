@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -10,6 +11,16 @@ import (
 )
 
 const lastTerminationOOMWindow = 30 * time.Minute
+
+var criticalWaitingReasons = map[string]struct{}{
+	"CrashLoopBackOff":           {},
+	"ImagePullBackOff":           {},
+	"ErrImagePull":               {},
+	"CreateContainerConfigError": {},
+	"CreateContainerError":       {},
+	"RunContainerError":          {},
+	"ContainerCannotRun":         {},
+}
 
 type Pod struct {
 	Name      string
@@ -83,37 +94,53 @@ func (s *PodService) CheckPodCriticalErrors(ctx context.Context, workload *Workl
 		if p.Status.Phase == v1.PodPending {
 			for _, cond := range p.Status.Conditions {
 				if cond.Type == v1.PodScheduled && cond.Status == v1.ConditionFalse && cond.Reason == "Unschedulable" {
-					return true, fmt.Sprintf("Insufficient resources in the cluster: %s", cond.Message)
+					if autoscalerCanLikelyHelpUnschedulable(cond.Message) {
+						return false, fmt.Sprintf("[WARN] Cluster saturation detected for %s: %s. Autoscaler may add nodes, continuing.", workload.Id, cond.Message)
+					}
+
+					return true, fmt.Sprintf("Unschedulable pod for %s: %s. Likely not recoverable via autoscaler", workload.Id, cond.Message)
 				}
 			}
 		}
 
-		// 2. Check the status of individual containers
-		for _, cs := range p.Status.ContainerStatuses {
-			// Waiting cases
-			if cs.State.Waiting != nil {
-				reason := cs.State.Waiting.Reason
-				if reason == "CrashLoopBackOff" || reason == "ImagePullBackOff" || reason == "CreateContainerConfigError" {
-					return true, fmt.Sprintf("Container in error: %s", reason)
-				}
-			}
-
-			// Terminated cases
-			if cs.State.Terminated != nil {
-				if cs.State.Terminated.Reason == "OOMKilled" {
-					return true, "OOMKilled: Insufficient memory for startup"
-				}
-			}
-
-			// Check the last termination state (if it crashed recently)
-			if cs.LastTerminationState.Terminated != nil &&
-				cs.LastTerminationState.Terminated.Reason == "OOMKilled" &&
-				isRecentTermination(cs.LastTerminationState.Terminated, time.Now(), lastTerminationOOMWindow) {
-				return true, "OOMKilled detected in the last restart: Insufficient memory for startup"
-			}
+		// 2. Check the status of individual containers (including init containers)
+		if isError, reason := checkContainerStatusesForCriticalErrors(p.Status.ContainerStatuses, time.Now()); isError {
+			return true, reason
+		}
+		if isError, reason := checkContainerStatusesForCriticalErrors(p.Status.InitContainerStatuses, time.Now()); isError {
+			return true, reason
 		}
 	}
 	return false, ""
+}
+
+func checkContainerStatusesForCriticalErrors(statuses []v1.ContainerStatus, now time.Time) (bool, string) {
+	for _, cs := range statuses {
+		if cs.State.Waiting != nil {
+			reason := cs.State.Waiting.Reason
+			if _, ok := criticalWaitingReasons[reason]; ok {
+				return true, fmt.Sprintf("Container in error: %s", reason)
+			}
+		}
+
+		if cs.State.Terminated != nil {
+			if isCriticalTerminationReason(cs.State.Terminated.Reason) {
+				return true, fmt.Sprintf("Container terminated with reason: %s", cs.State.Terminated.Reason)
+			}
+		}
+
+		if cs.LastTerminationState.Terminated != nil &&
+			isCriticalTerminationReason(cs.LastTerminationState.Terminated.Reason) &&
+			isRecentTermination(cs.LastTerminationState.Terminated, now, lastTerminationOOMWindow) {
+			return true, fmt.Sprintf("Container recently terminated with reason: %s", cs.LastTerminationState.Terminated.Reason)
+		}
+	}
+
+	return false, ""
+}
+
+func isCriticalTerminationReason(reason string) bool {
+	return reason == "OOMKilled" || reason == "Error" || reason == "ContainerCannotRun"
 }
 
 // isRecentTermination checks if a container termination event occurred within a specified time window. It returns true if the termination event is recent, indicating a potential ongoing issue with insufficient memory for startup.
@@ -131,4 +158,44 @@ func isRecentTermination(t *v1.ContainerStateTerminated, now time.Time, window t
 	}
 
 	return t.FinishedAt.Time.After(now.Add(-window))
+}
+
+func autoscalerCanLikelyHelpUnschedulable(message string) bool {
+	msg := strings.ToLower(message)
+
+	// Hard scheduling constraints usually cannot be fixed by adding generic nodes.
+	nonRecoverableHints := []string{
+		"didn't match node selector",
+		"did not match node selector",
+		"didn't match pod affinity",
+		"did not match pod affinity",
+		"didn't match pod anti-affinity",
+		"did not match pod anti-affinity",
+		"untolerated taint",
+		"had taint",
+		"volume node affinity conflict",
+		"persistentvolumeclaim is not bound",
+	}
+
+	for _, hint := range nonRecoverableHints {
+		if strings.Contains(msg, hint) {
+			return false
+		}
+	}
+
+	// Resource pressure can often be mitigated by Cluster Autoscaler scale-out.
+	recoverableHints := []string{
+		"insufficient cpu",
+		"insufficient memory",
+		"insufficient ephemeral-storage",
+		"too many pods",
+	}
+
+	for _, hint := range recoverableHints {
+		if strings.Contains(msg, hint) {
+			return true
+		}
+	}
+
+	return false
 }

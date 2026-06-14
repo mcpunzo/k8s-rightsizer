@@ -23,6 +23,8 @@ const (
 	StatefulsetCheckTimeout = 30 * time.Minute
 )
 
+var PostRolloutSoakDuration = 90 * time.Second
+
 // BaseResizer is a struct that holds common fields for resizers, such as references to deployment and stateful set workloads.
 type BaseResizer struct {
 	client              k8s.K8sClient
@@ -95,6 +97,9 @@ func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadService,
 	isThereAnError, reason := r.podSvc.CheckPodCriticalErrors(ctx, workload)
 	if isThereAnError {
 		return fmt.Errorf("skipping resize due to critical error detected in pods for %s: %s", workload.Id, reason)
+	}
+	if reason != "" {
+		log.Printf("[%s] %s", workload.Id, reason)
 	}
 
 	return nil
@@ -177,10 +182,12 @@ func (r *BaseResizer) CheckWorkloadStatus(ctx context.Context, w k8s.WorkloadSer
 		}
 
 		// 2. Check for critical errors (OOM, CrashLoop, etc.)
-		// The CheckPodCriticalErrors function is already generic because it accepts the LabelSelector
 		isError, reason := r.podSvc.CheckPodCriticalErrors(ctx, workload)
 		if isError {
 			return false, fmt.Errorf("fail detected in workload %s: %s", workload.Id, reason)
+		}
+		if reason != "" {
+			log.Printf("[%s] %s", workload.Id, reason)
 		}
 
 		// 3. Check if the rollout has completed
@@ -307,58 +314,99 @@ func (r *BaseResizer) ApplyResize(ctx context.Context, recs []*model.Recommendat
 	err = wait.PollUntilContextTimeout(ctx, WorkloadCheckInterval, workloadCheckTimeout, false, checkStatusFunc)
 
 	if err != nil {
-		log.Printf("[!!!] ERROR: %v. Rollback Started for %s", err, workload.Id)
+		return r.rollbackAfterFailedUpdate(ctx, err, recs, w, workload, originalTemplate, workloadCheckTimeout)
+	}
 
-		// Create a new rollback recommendation based on the original template values (the backup)
-		rollbackRecs := r.CreateRollbackRecommendation(recs, *originalTemplate)
-		if len(rollbackRecs) == 0 {
-			return fmt.Errorf("impossible to create rollback recommendation for %s", workload.Id)
-		}
-
-		// Use a fresh context for rollback: the polling context may already be expired.
-		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workloadCheckTimeout)
-		defer cancel()
-		// Retry on conflict: the deployment may still be rolling out when we try to update it,
-		// causing a ResourceVersion conflict ("object has been modified"). Re-fetch and retry.
-		errRollback := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			// Retrieve the fresh workload object from the cluster to avoid ResourceVersion conflicts
-			freshWorkload, errFetch := w.FindWorkload(rollbackCtx, recs[0])
-			if errFetch != nil {
-				return fmt.Errorf("failed to retrieve workload for rollback: %v", errFetch)
-			}
-
-			// Perform the resize to the original values (rollback)
-			return w.ResizeWorkload(rollbackCtx, freshWorkload, rollbackRecs)
-		})
-
-		if errRollback != nil {
-			return fmt.Errorf("failed update (%v) and failed rollback (%v)", err, errRollback)
-		}
-
-		// After a successful rollback API call, verify that the workload has actually
-		// converged back to a stable state.
-		rollbackVerifyCtx, cancelVerify := context.WithTimeout(context.WithoutCancel(ctx), workloadCheckTimeout)
-		defer cancelVerify()
-
-		rollbackWorkload, errFetchRollback := w.FindWorkload(rollbackVerifyCtx, recs[0])
-		if errFetchRollback != nil {
-			return fmt.Errorf("update failed (%v), rollback completed but failed to retrieve workload for verification (%v)", err, errFetchRollback)
-		}
-
-		errRollbackVerification := wait.PollUntilContextTimeout(
-			rollbackVerifyCtx,
-			WorkloadCheckInterval,
-			workloadCheckTimeout,
-			false,
-			r.CheckWorkloadStatus(rollbackVerifyCtx, w, rollbackWorkload),
-		)
-		if errRollbackVerification != nil {
-			return fmt.Errorf("update failed (%v), rollback completed but workload is not stable (%v)", err, errRollbackVerification)
-		}
-
-		return fmt.Errorf("update canceled and rollback completed successfully: %v", err)
+	if err := r.verifyPostRolloutStability(ctx, workload); err != nil {
+		return r.rollbackAfterFailedUpdate(ctx, err, recs, w, workload, originalTemplate, workloadCheckTimeout)
 	}
 
 	log.Printf("[SUCCESS] %s/%s updated and stable", workload.Namespace, workload.Name)
 	return nil
+}
+
+func (r *BaseResizer) verifyPostRolloutStability(ctx context.Context, workload *k8s.Workload) error {
+	if PostRolloutSoakDuration <= 0 {
+		return nil
+	}
+
+	soakCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), PostRolloutSoakDuration)
+	defer cancel()
+
+	log.Printf("[%s] Starting post-rollout soak verification for %s", workload.Id, PostRolloutSoakDuration)
+
+	err := wait.PollUntilContextTimeout(soakCtx, WorkloadCheckInterval, PostRolloutSoakDuration, true, func(pollCtx context.Context) (bool, error) {
+		isError, reason := r.podSvc.CheckPodCriticalErrors(pollCtx, workload)
+		if isError {
+			return false, fmt.Errorf("post-rollout instability detected for %s: %s", workload.Id, reason)
+		}
+		if reason != "" {
+			log.Printf("[%s] %s", workload.Id, reason)
+		}
+		return false, nil
+	})
+
+	if err == nil {
+		return nil
+	}
+
+	if err == context.DeadlineExceeded || err == context.Canceled {
+		return nil
+	}
+
+	return err
+}
+
+func (r *BaseResizer) rollbackAfterFailedUpdate(
+	ctx context.Context,
+	updateErr error,
+	recs []*model.Recommendation,
+	w k8s.WorkloadService,
+	workload *k8s.Workload,
+	originalTemplate *v1.PodTemplateSpec,
+	workloadCheckTimeout time.Duration,
+) error {
+	log.Printf("[!!!] ERROR: %v. Rollback Started for %s", updateErr, workload.Id)
+
+	rollbackRecs := r.CreateRollbackRecommendation(recs, *originalTemplate)
+	if len(rollbackRecs) == 0 {
+		return fmt.Errorf("impossible to create rollback recommendation for %s", workload.Id)
+	}
+
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workloadCheckTimeout)
+	defer cancel()
+
+	errRollback := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		freshWorkload, errFetch := w.FindWorkload(rollbackCtx, recs[0])
+		if errFetch != nil {
+			return fmt.Errorf("failed to retrieve workload for rollback: %v", errFetch)
+		}
+
+		return w.ResizeWorkload(rollbackCtx, freshWorkload, rollbackRecs)
+	})
+
+	if errRollback != nil {
+		return fmt.Errorf("failed update (%v) and failed rollback (%v)", updateErr, errRollback)
+	}
+
+	rollbackVerifyCtx, cancelVerify := context.WithTimeout(context.WithoutCancel(ctx), workloadCheckTimeout)
+	defer cancelVerify()
+
+	rollbackWorkload, errFetchRollback := w.FindWorkload(rollbackVerifyCtx, recs[0])
+	if errFetchRollback != nil {
+		return fmt.Errorf("update failed (%v), rollback completed but failed to retrieve workload for verification (%v)", updateErr, errFetchRollback)
+	}
+
+	errRollbackVerification := wait.PollUntilContextTimeout(
+		rollbackVerifyCtx,
+		WorkloadCheckInterval,
+		workloadCheckTimeout,
+		false,
+		r.CheckWorkloadStatus(rollbackVerifyCtx, w, rollbackWorkload),
+	)
+	if errRollbackVerification != nil {
+		return fmt.Errorf("update failed (%v), rollback completed but workload is not stable (%v)", updateErr, errRollbackVerification)
+	}
+
+	return fmt.Errorf("update canceled and rollback completed successfully: %v", updateErr)
 }

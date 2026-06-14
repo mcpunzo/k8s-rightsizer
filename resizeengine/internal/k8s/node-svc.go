@@ -3,7 +3,6 @@ package k8s
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,7 +31,7 @@ type NodeStats struct {
 
 // Find retrieves the count of compatible and ready nodes in the cluster based on the specified architecture.
 // param ctx The context for controlling cancellation and timeouts.
-// param architecture The desired architecture (e.g., "amd64", "arm64"). If empty, it will consider non-ARM nodes as compatible.
+// param architecture The desired architecture (e.g., "amd64", "arm64"). If empty, any ready and schedulable architecture is considered compatible.
 // returns compatibleNodesCount The number of nodes that are compatible with the specified architecture and are schedulable.
 // returns readyNodesCount The total number of nodes that are in Ready state, regardless of compatibility.
 // returns error An error if there was an issue retrieving the nodes or processing them.
@@ -61,18 +60,14 @@ func (s *NodeService) Find(ctx context.Context, architecture string) (*NodeStats
 		}
 
 		nodeArch := node.Labels["kubernetes.io/arch"]
-		// exclusion logic: if the pod wants x86 but the node is ARM (Graviton), discard.
-		isArmNode := strings.Contains(nodeArch, "arm") || strings.Contains(node.Labels["node.kubernetes.io/instance-type"], "g")
 
 		if architecture != "" {
 			if nodeArch == architecture {
 				compatibleNodesCount++
 			}
 		} else {
-			// if deployment does not specify architecture, assume x86 (non-ARM) nodes are compatible
-			if !isArmNode {
-				compatibleNodesCount++
-			}
+			// If no architecture is requested, any ready/schedulable node is considered compatible.
+			compatibleNodesCount++
 		}
 	}
 	return &NodeStats{
