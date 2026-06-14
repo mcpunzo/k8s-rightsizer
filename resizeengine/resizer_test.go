@@ -778,11 +778,14 @@ func TestNodeCheck(t *testing.T) {
 func TestNodeCheck_CompatibleNodesRecheck(t *testing.T) {
 	originalWindow := NodeCompatibilityRecheckWindow
 	originalPoll := NodeCompatibilityRecheckPollInterval
+	originalCooldown := NodeCompatibilityRecheckCooldown
 	NodeCompatibilityRecheckWindow = 40 * time.Millisecond
 	NodeCompatibilityRecheckPollInterval = 10 * time.Millisecond
+	NodeCompatibilityRecheckCooldown = 80 * time.Millisecond
 	t.Cleanup(func() {
 		NodeCompatibilityRecheckWindow = originalWindow
 		NodeCompatibilityRecheckPollInterval = originalPoll
+		NodeCompatibilityRecheckCooldown = originalCooldown
 	})
 
 	t.Run("Success - compatible nodes appear during recheck", func(t *testing.T) {
@@ -845,6 +848,45 @@ func TestNodeCheck_CompatibleNodesRecheck(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "no ready/schedulable nodes currently available in the cluster after") {
 			t.Fatalf("NodeCheck() error = %v, want no-compatible-nodes timeout", err)
+		}
+	})
+
+	t.Run("Failure - second check skips long recheck during cooldown", func(t *testing.T) {
+		workload := &k8s.Workload{
+			Namespace: "default",
+			Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{}}},
+		}
+
+		fakeClient := fake.NewSimpleClientset(
+			mkNodeForCheck("n1", "arm64", true, true),
+			mkNodeForCheck("n2", "arm64", true, true),
+		)
+
+		baseResizer := &BaseResizer{
+			client:  fakeClient,
+			podSvc:  k8s.NewPodService(fakeClient),
+			nodeSvc: k8s.NewNodeService(fakeClient),
+		}
+
+		start := time.Now()
+		err := baseResizer.NodeCheck(context.Background(), workload)
+		firstElapsed := time.Since(start)
+		if err == nil {
+			t.Fatal("first NodeCheck() expected error, got nil")
+		}
+
+		start = time.Now()
+		err = baseResizer.NodeCheck(context.Background(), workload)
+		secondElapsed := time.Since(start)
+		if err == nil {
+			t.Fatal("second NodeCheck() expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "recent compatibility recheck already failed") {
+			t.Fatalf("second NodeCheck() error = %v, want cooldown fast-fail", err)
+		}
+
+		if secondElapsed >= firstElapsed {
+			t.Fatalf("expected second NodeCheck() to be faster, first=%s second=%s", firstElapsed, secondElapsed)
 		}
 	})
 }

@@ -455,11 +455,24 @@ func TestCheckPodCriticalErrors(t *testing.T) {
 			wantIsError: false,
 			wantReason:  "",
 		},
+		{
+			name:        "Pod list API failure is warning, not fatal",
+			namespace:   "default",
+			labels:      map[string]string{"app": "test"},
+			pods:        []runtime.Object{},
+			wantIsError: false,
+			wantReason:  "[WARN] failed to list pods",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(tt.pods...)
+			if tt.name == "Pod list API failure is warning, not fatal" {
+				fakeClient.PrependReactor("list", "pods", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("client rate limiter Wait returned an error: context deadline exceeded")
+				})
+			}
 
 			podSvc := &PodService{
 				client: fakeClient,

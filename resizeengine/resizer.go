@@ -2,8 +2,10 @@ package resizeengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -26,7 +28,10 @@ var (
 	PostRolloutSoakDuration              = 90 * time.Second
 	NodeCompatibilityRecheckWindow       = 90 * time.Second
 	NodeCompatibilityRecheckPollInterval = 10 * time.Second
+	NodeCompatibilityRecheckCooldown     = 30 * time.Second
 )
+
+var errCompatibleNodesUnavailable = errors.New("no ready/schedulable nodes currently available in the cluster")
 
 // BaseResizer is a struct that holds common fields for resizers, such as references to deployment and stateful set workloads.
 type BaseResizer struct {
@@ -36,6 +41,10 @@ type BaseResizer struct {
 	podSvc              *k8s.PodService
 	nodeSvc             *k8s.NodeService
 	resizeWatcher       *watcher.ResizeWatcher
+
+	nodeRecheckMu               sync.Mutex
+	lastNoCompatibleNodesAt     time.Time
+	lastNoCompatibleNodesWindow time.Duration
 }
 
 // ResizePrecheck performs pre-checks before resizing the workload, such as checking for PDB restrictions and UpdateStrategy settings.
@@ -150,11 +159,20 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 			return fmt.Errorf("no compatible architecture nodes available (possible Graviton/x86 mismatch)")
 		}
 
+		if r.shouldSkipCompatibleNodesRecheck() {
+			return fmt.Errorf("%w (recent compatibility recheck already failed, skipping wait)", errCompatibleNodesUnavailable)
+		}
+
 		log.Warn().Msgf("No ready/schedulable nodes currently available in the cluster. Rechecking for %s before failing.", NodeCompatibilityRecheckWindow)
 
 		if err := r.waitForCompatibleNodes(ctx, architecture); err != nil {
+			if errors.Is(err, errCompatibleNodesUnavailable) {
+				r.markCompatibleNodesRecheckFailure(NodeCompatibilityRecheckWindow)
+			}
 			return err
 		}
+
+		r.clearCompatibleNodesRecheckFailure()
 	}
 
 	return nil
@@ -162,7 +180,7 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 
 func (r *BaseResizer) waitForCompatibleNodes(ctx context.Context, architecture string) error {
 	if NodeCompatibilityRecheckWindow <= 0 {
-		return fmt.Errorf("no ready/schedulable nodes currently available in the cluster")
+		return errCompatibleNodesUnavailable
 	}
 
 	recheckCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), NodeCompatibilityRecheckWindow)
@@ -186,10 +204,41 @@ func (r *BaseResizer) waitForCompatibleNodes(ctx context.Context, architecture s
 	}
 
 	if err == context.DeadlineExceeded || err == context.Canceled {
-		return fmt.Errorf("no ready/schedulable nodes currently available in the cluster after %s", NodeCompatibilityRecheckWindow)
+		return fmt.Errorf("%w after %s", errCompatibleNodesUnavailable, NodeCompatibilityRecheckWindow)
 	}
 
 	return err
+}
+
+func (r *BaseResizer) shouldSkipCompatibleNodesRecheck() bool {
+	if NodeCompatibilityRecheckCooldown <= 0 {
+		return false
+	}
+
+	r.nodeRecheckMu.Lock()
+	defer r.nodeRecheckMu.Unlock()
+
+	if r.lastNoCompatibleNodesAt.IsZero() {
+		return false
+	}
+
+	return time.Since(r.lastNoCompatibleNodesAt) < NodeCompatibilityRecheckCooldown
+}
+
+func (r *BaseResizer) markCompatibleNodesRecheckFailure(window time.Duration) {
+	r.nodeRecheckMu.Lock()
+	defer r.nodeRecheckMu.Unlock()
+
+	r.lastNoCompatibleNodesAt = time.Now()
+	r.lastNoCompatibleNodesWindow = window
+}
+
+func (r *BaseResizer) clearCompatibleNodesRecheckFailure() {
+	r.nodeRecheckMu.Lock()
+	defer r.nodeRecheckMu.Unlock()
+
+	r.lastNoCompatibleNodesAt = time.Time{}
+	r.lastNoCompatibleNodesWindow = 0
 }
 
 // CreateRollbackRecommendation processes the recommendations for resizing workloads. It iterates through the provided recommendations, retrieves the current state of the workload, validates the recommendations, performs pre-checks, and attempts to resize the workload. The results of each operation are sent to the results channel.

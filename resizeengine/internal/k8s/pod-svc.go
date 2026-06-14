@@ -72,7 +72,7 @@ func (s *PodService) Find(ctx context.Context, namespace, fieldselector string) 
 func (s *PodService) CheckPodCriticalErrors(ctx context.Context, workload *Workload) (bool, string) {
 	selector, err := metav1.LabelSelectorAsSelector(workload.LabelSelector)
 	if err != nil {
-		return true, fmt.Sprintf("failed to create label selector for %s: %v. Skipping critical error check, but be aware of potential undetected issues.\n", workload.Id, err)
+		return false, fmt.Sprintf("[WARN] failed to create label selector for %s: %v. Skipping critical error check, but be aware of potential undetected issues.", workload.Id, err)
 	}
 
 	pods, err := s.client.CoreV1().Pods(workload.Namespace).List(ctx, metav1.ListOptions{
@@ -80,7 +80,7 @@ func (s *PodService) CheckPodCriticalErrors(ctx context.Context, workload *Workl
 	})
 
 	if err != nil {
-		return true, fmt.Sprintf("failed to list pods for %s: %v. Skipping critical error check, but be aware of potential undetected issues.\n", workload.Id, err)
+		return false, fmt.Sprintf("[WARN] failed to list pods for %s: %v. Skipping critical error check, but be aware of potential undetected issues.", workload.Id, err)
 	}
 
 	for _, p := range pods.Items {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/recommendation/reader"
@@ -31,10 +32,10 @@ func main() {
 	flag.Parse()
 
 	setLogLevel(*logLevel)
-	log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout}).
+	zerolog.TimeFieldFormat = time.RFC3339
+	log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: "2006-01-02 15:04:05"}).
 		With().
 		Timestamp().
-		Str("app", "k8s-rightsizer").
 		Logger()
 
 	log.Info().Msg("--- Start Rightsizer ---")
