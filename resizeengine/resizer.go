@@ -24,6 +24,8 @@ const (
 )
 
 var PostRolloutSoakDuration = 90 * time.Second
+var NodeCompatibilityRecheckWindow = 45 * time.Second
+var NodeCompatibilityRecheckPollInterval = 5 * time.Second
 
 // BaseResizer is a struct that holds common fields for resizers, such as references to deployment and stateful set workloads.
 type BaseResizer struct {
@@ -111,6 +113,14 @@ func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadService,
 // param workload: The Workload struct representing the workload to be resized.
 // returns: An error if any issues are detected that would prevent resizing.
 func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) error {
+	if workload == nil {
+		return fmt.Errorf("workload cannot be nil")
+	}
+
+	if workload.Template == nil {
+		return fmt.Errorf("workload template cannot be nil")
+	}
+
 	// 1. Check namespace congestion: if there are already too many pending pods in the namespace, it may indicate a cluster-wide scheduling issue that would prevent our pods from starting up successfully after the resize. In that case, we should fail fast and avoid triggering a rollout that is likely to fail.
 	podList, err := r.podSvc.Find(ctx, workload.Namespace, "status.phase=Pending")
 	if err != nil {
@@ -118,7 +128,7 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 	}
 
 	if len(podList) > 3 {
-		return fmt.Errorf("namespace congestion: %d pods already pending", len(podList))
+		log.Printf("[WARN] Namespace %s has %d pending pods, which may indicate cluster-wide scheduling issues. Proceeding with caution.\n", workload.Namespace, len(podList))
 	}
 
 	//2. architectural constraints: if the workload is currently running on nodes with specific architectural constraints (e.g., GPU, ARM), we should check if there are enough available nodes with those constraints to accommodate the resized pods. If not, we should fail fast to avoid triggering a rollout that is likely to fail due to scheduling issues.
@@ -135,10 +145,50 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 
 	// if there are no nodes compatible with the pod's architecture, the rollout will fail due to scheduling issues, so we should fail fast with a clear message about the potential architecture mismatch (e.g., Graviton vs x86).
 	if nodeStats.CompatibleNodesCount == 0 {
-		return fmt.Errorf("no compatible architecture nodes available (possible Graviton/x86 mismatch)")
+		if architecture != "" {
+			return fmt.Errorf("no compatible architecture nodes available (possible Graviton/x86 mismatch)")
+		}
+
+		log.Printf("[WARN] No ready/schedulable nodes currently available in the cluster. Rechecking for %s before failing.\n", NodeCompatibilityRecheckWindow)
+
+		if err := r.waitForCompatibleNodes(ctx, architecture); err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+func (r *BaseResizer) waitForCompatibleNodes(ctx context.Context, architecture string) error {
+	if NodeCompatibilityRecheckWindow <= 0 {
+		return fmt.Errorf("no ready/schedulable nodes currently available in the cluster")
+	}
+
+	recheckCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), NodeCompatibilityRecheckWindow)
+	defer cancel()
+
+	err := wait.PollUntilContextTimeout(recheckCtx, NodeCompatibilityRecheckPollInterval, NodeCompatibilityRecheckWindow, true, func(pollCtx context.Context) (bool, error) {
+		nodeStats, err := r.nodeSvc.Find(pollCtx, architecture)
+		if err != nil {
+			return false, fmt.Errorf("failed to recheck compatible nodes: %v", err)
+		}
+
+		if nodeStats.CompatibleNodesCount > 0 {
+			return true, nil
+		}
+
+		return false, nil
+	})
+
+	if err == nil {
+		return nil
+	}
+
+	if err == context.DeadlineExceeded || err == context.Canceled {
+		return fmt.Errorf("no ready/schedulable nodes currently available in the cluster after %s", NodeCompatibilityRecheckWindow)
+	}
+
+	return err
 }
 
 // CreateRollbackRecommendation processes the recommendations for resizing workloads. It iterates through the provided recommendations, retrieves the current state of the workload, validates the recommendations, performs pre-checks, and attempts to resize the workload. The results of each operation are sent to the results channel.
