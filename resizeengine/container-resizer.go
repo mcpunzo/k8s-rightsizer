@@ -3,9 +3,10 @@ package resizeengine
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
@@ -58,7 +59,7 @@ func (r *ContainerResizer) Resize(ctx context.Context, recs []model.Recommendati
 	donePrinting := make(chan struct{})
 	go func() {
 		for res := range results {
-			log.Println(res)
+			log.Info().Msg(res)
 		}
 		donePrinting <- struct{}{}
 	}()
@@ -97,10 +98,10 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 	for rec := range recs {
 		select {
 		case <-ctx.Done():
-			log.Printf("Context canceled, stopping ResizeJob")
+			log.Info().Msg("Context canceled, stopping ResizeJob")
 			return
 		default:
-			log.Printf("Processing recommendation for %s\n", rec.ContainerID())
+			log.Info().Msgf("Processing recommendation for %s", rec.ContainerID())
 
 			workloadSvc, err := r.lookupWorkloadOps(rec.Kind)
 			if err != nil {
@@ -112,7 +113,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			}
 
 			//retrieve the current workload
-			log.Printf("Find Workload %s\n", rec.ContainerID())
+			log.Info().Msgf("Find Workload %s", rec.ContainerID())
 			workload, err := workloadSvc.FindWorkload(ctx, rec)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
@@ -123,7 +124,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			}
 
 			//validate the recommendations before trying to resize, to fail fast if there are any issues with the recs (e.g. invalid values, or values that would cause errors if applied)
-			log.Printf("Validate recommendations for %s\n", rec.ContainerID())
+			log.Info().Msgf("Validate recommendations for %s", rec.ContainerID())
 			if err := workload.ValidateRecommendations(ctx, rec); err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
 				resizeEvent := watcher.CreateResizeEvent([]*model.Recommendation{rec}, watcher.ResizeSkipped, errMsg)
@@ -132,7 +133,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 				continue
 			}
 
-			log.Printf("PreCheck assessment for %s\n", rec.ContainerID())
+			log.Info().Msgf("PreCheck assessment for %s", rec.ContainerID())
 			err = r.ResizePrecheck(ctx, workloadSvc, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
@@ -142,7 +143,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 				continue
 			}
 
-			log.Printf("Cluster nodes assessment for %s\n", rec.ContainerID())
+			log.Info().Msgf("Cluster nodes assessment for %s", rec.ContainerID())
 			err = r.NodeCheck(ctx, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
@@ -152,7 +153,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 				continue
 			}
 
-			log.Printf("Try resizing %s\n", rec.ContainerID())
+			log.Info().Msgf("Try resizing %s", rec.ContainerID())
 			err = r.ApplyResize(ctx, []*model.Recommendation{rec}, workloadSvc, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[KO] failed to resize %s: %v", rec.ContainerID(), err)
@@ -170,7 +171,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			select {
 			case <-time.After(2 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
 			case <-ctx.Done():
-				log.Printf("Context canceled during delay, stopping ResizeJob")
+				log.Info().Msg("Context canceled during delay, stopping ResizeJob")
 				return
 			}
 		}

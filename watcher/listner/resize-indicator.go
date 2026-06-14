@@ -1,10 +1,10 @@
 package listner
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/mcpunzo/k8s-rightsizer/watcher"
+	"github.com/rs/zerolog/log"
 )
 
 // ResizeIndicator is a struct that implements the Listener interface and keeps track of the number of recommendations processed.
@@ -32,5 +32,6 @@ func (r *ResizeIndicator) HandleResizeEvent(event *watcher.ResizeEvent) {
 	defer r.lock.Unlock()
 
 	r.RecommendationProcessed += len(event.Recommendation)
-	fmt.Printf("ResizeIndicator: Processed %d/%d recommendations\n", r.RecommendationProcessed, r.NumberOfRecommendations)
+
+	log.Info().Msgf("ResizeIndicator: Processed %d/%d recommendations", r.RecommendationProcessed, r.NumberOfRecommendations)
 }

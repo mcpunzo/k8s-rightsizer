@@ -3,7 +3,8 @@ package k8s
 import (
 	"context"
 	"fmt"
-	"log"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/model"
@@ -31,7 +32,7 @@ func NewDeploymentWorkload(client K8sClient) *DeploymentWorkload {
 func (w *DeploymentWorkload) FindWorkload(ctx context.Context, rec *model.Recommendation) (*Workload, error) {
 	deployment, err := w.client.AppsV1().Deployments(rec.Namespace).Get(ctx, rec.WorkloadName, metav1.GetOptions{})
 	if err != nil {
-		log.Printf("failed to get deployment for %s: %v\n", rec, err)
+		log.Error().Err(err).Msgf("failed to get deployment for %s", rec.WorkloadID())
 		return nil, err
 	}
 
@@ -56,7 +57,7 @@ func (w *DeploymentWorkload) FindWorkload(ctx context.Context, rec *model.Recomm
 // param recs: The slice of Recommendations containing the new resource requests and target container information.
 // returns: An error if the container is not found or if the update operation fails.
 func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workload, recs []*model.Recommendation) error {
-	log.Printf("Resizing Workload: %s/%s\n", workload.Namespace, workload.Name)
+	log.Info().Msgf("Resizing Workload: %s/%s", workload.Namespace, workload.Name)
 
 	if workload.WorkloadType != Deployment {
 		return fmt.Errorf("invalid workload type: expected Deployment, got %s", workload.WorkloadType)
@@ -66,10 +67,10 @@ func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workl
 	for _, rec := range recs {
 		updated, err := workload.ResizeContainer(ctx, rec)
 		if err != nil {
-			log.Printf("skipping resize for container %s in deployment %s: %v", rec.Container, workload.Name, err)
+			log.Warn().Err(err).Msgf("skipping resize for container %s in deployment %s", rec.Container, workload.Name)
 		}
 		if !updated {
-			log.Printf("skipping resize for container %s in deployment %s: container not found or resources already match recommendation", rec.Container, workload.Name)
+			log.Info().Msgf("skipping resize for container %s in deployment %s: container not found or resources already match recommendation", rec.Container, workload.Name)
 		}
 
 		if updated {
@@ -87,7 +88,7 @@ func (w *DeploymentWorkload) ResizeWorkload(ctx context.Context, workload *Workl
 	}
 
 	if ctxkeys.DryRunFromContext(ctx) {
-		log.Printf("[Dry-Run] Would update deployment %s/%s with new resources\n", workload.Namespace, workload.Name)
+		log.Info().Msgf("[Dry-Run] Would update deployment %s/%s with new resources", workload.Namespace, workload.Name)
 		return nil
 	}
 

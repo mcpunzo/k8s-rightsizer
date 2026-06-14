@@ -2,8 +2,9 @@ package watcher
 
 import (
 	"errors"
-	"fmt"
 	"sync"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Listener is an interface that defines a method to handle resize events.
@@ -55,7 +56,7 @@ func (w *ResizeWatcher) Notify(event *ResizeEvent) {
 		func(listener Listener) {
 			defer func() {
 				if r := recover(); r != nil {
-					fmt.Printf("[Crash Alert] panic caught for listener %T: %v\n", listener, r)
+					log.Warn().Msgf("[Crash Alert] panic caught for listener %T: %v", listener, r)
 				}
 			}()
 

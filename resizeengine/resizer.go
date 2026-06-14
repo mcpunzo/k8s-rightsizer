@@ -3,8 +3,10 @@ package resizeengine
 import (
 	"context"
 	"fmt"
-	"log"
+	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/model"
@@ -44,12 +46,12 @@ type BaseResizer struct {
 // param workload: The Workload struct representing the workload to be resized.
 // returns: An error if any issues are detected that would prevent resizing.
 func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadService, workload *k8s.Workload) error {
-	log.Print("Performing ResizePrecheck")
+	log.Info().Msg("Performing ResizePrecheck")
 	if workload == nil {
 		return fmt.Errorf("workload cannot be nil")
 	}
 
-	log.Printf("Performing pre-checks before resizing %s\n", workload.Id)
+	log.Info().Msgf("Performing pre-checks before resizing %s", workload.Id)
 
 	// check if the workload is in a paused state
 	pause, err := w.IsWorkloadInPausedState(ctx, workload)
@@ -64,7 +66,7 @@ func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadService,
 	IsPDBTooRestrictive, err := r.IsPDBTooRestrictive(ctx, workload.Namespace, workload.LabelSelector)
 	if err != nil {
 		//TODO this may be configurable: we can decide to fail immediately if we cannot check PDBs, or to proceed with a warning. For now, let's proceed with a warning, but log the error.
-		log.Printf("failed to check PDB restrictions for %s: %v. Proceeding with resize, but be aware of potential disruptions.\n", workload.Id, err)
+		log.Warn().Err(err).Msgf("failed to check PDB restrictions for %s. Proceeding with resize, but be aware of potential disruptions.", workload.Id)
 	}
 	if IsPDBTooRestrictive {
 		return fmt.Errorf("skipping resize due to PDB restrictions for %s: resizing may cause disruption", workload.Id)
@@ -78,7 +80,7 @@ func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadService,
 		if !ctxkeys.ResizeOnRecreateFromContext(ctx) {
 			return fmt.Errorf("skipping resize due to UpdateStrategy set on Recreate for %s: resizing may cause downtime", workload.Id)
 		}
-		log.Printf("Warning: UpdateStrategy is set to Recreate for %s. Resizing may cause downtime, but proceeding as per configuration.\n", workload.Id)
+		log.Warn().Msgf("UpdateStrategy is set to Recreate for %s. Resizing may cause downtime, but proceeding as per configuration.", workload.Id)
 	}
 	// if we are here, it means that the UpdateStrategy is RollingUpdate, so we can proceed with the resize operation.
 	// we could add another check on statefulset and check if the partition is set to 0, which means that all pods will be updated at once, and in that case we could skip the resize to avoid potential downtime. This can be done by retrieving the current UpdateStrategy of the statefulset and checking the partition value before proceeding with the resize operation.
@@ -100,7 +102,7 @@ func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadService,
 		return fmt.Errorf("skipping resize due to critical error detected in pods for %s: %s", workload.Id, reason)
 	}
 	if reason != "" {
-		log.Printf("[%s] %s", workload.Id, reason)
+		logPodReason(workload.Id, reason)
 	}
 
 	return nil
@@ -127,7 +129,7 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 	}
 
 	if len(podList) > 3 {
-		log.Printf("[WARN] Namespace %s has %d pending pods, which may indicate cluster-wide scheduling issues. Proceeding with caution.\n", workload.Namespace, len(podList))
+		log.Warn().Msgf("Namespace %s has %d pending pods, which may indicate cluster-wide scheduling issues. Proceeding with caution.", workload.Namespace, len(podList))
 	}
 
 	//2. architectural constraints: if the workload is currently running on nodes with specific architectural constraints (e.g., GPU, ARM), we should check if there are enough available nodes with those constraints to accommodate the resized pods. If not, we should fail fast to avoid triggering a rollout that is likely to fail due to scheduling issues.
@@ -148,7 +150,7 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 			return fmt.Errorf("no compatible architecture nodes available (possible Graviton/x86 mismatch)")
 		}
 
-		log.Printf("[WARN] No ready/schedulable nodes currently available in the cluster. Rechecking for %s before failing.\n", NodeCompatibilityRecheckWindow)
+		log.Warn().Msgf("No ready/schedulable nodes currently available in the cluster. Rechecking for %s before failing.", NodeCompatibilityRecheckWindow)
 
 		if err := r.waitForCompatibleNodes(ctx, architecture); err != nil {
 			return err
@@ -236,18 +238,18 @@ func (r *BaseResizer) CheckWorkloadStatus(ctx context.Context, w k8s.WorkloadSer
 			return false, fmt.Errorf("fail detected in workload %s: %s", workload.Id, reason)
 		}
 		if reason != "" {
-			log.Printf("[%s] %s", workload.Id, reason)
+			logPodReason(workload.Id, reason)
 		}
 
 		// 3. Check if the rollout has completed
 		if status.UpdatedReplicas == status.ExpectedReplicas &&
 			status.AvailableReplicas == status.ExpectedReplicas &&
 			status.ObservedGeneration >= status.Generation {
-			log.Printf("[%s] Rollout successfully completed", workload.Id)
+			log.Info().Msgf("[%s] Rollout successfully completed", workload.Id)
 			return true, nil
 		}
 
-		log.Printf("[%s] Rollout in progress... (%d/%d ready)", workload.Id, status.AvailableReplicas, status.ExpectedReplicas)
+		log.Info().Msgf("[%s] Rollout in progress... (%d/%d ready)", workload.Id, status.AvailableReplicas, status.ExpectedReplicas)
 		return false, nil
 	}
 }
@@ -370,7 +372,7 @@ func (r *BaseResizer) ApplyResize(ctx context.Context, recs []*model.Recommendat
 		return r.rollbackAfterFailedUpdate(ctx, err, recs, w, workload, originalTemplate, workloadCheckTimeout)
 	}
 
-	log.Printf("[SUCCESS] %s/%s updated and stable", workload.Namespace, workload.Name)
+	log.Info().Msgf("[SUCCESS] %s/%s updated and stable", workload.Namespace, workload.Name)
 	return nil
 }
 
@@ -387,7 +389,7 @@ func (r *BaseResizer) verifyPostRolloutStability(ctx context.Context, workload *
 	soakCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), PostRolloutSoakDuration)
 	defer cancel()
 
-	log.Printf("[%s] Starting post-rollout soak verification for %s", workload.Id, PostRolloutSoakDuration)
+	log.Info().Msgf("[%s] Starting post-rollout soak verification for %s", workload.Id, PostRolloutSoakDuration)
 
 	err := wait.PollUntilContextTimeout(soakCtx, WorkloadCheckInterval, PostRolloutSoakDuration, true, func(pollCtx context.Context) (bool, error) {
 		isError, reason := r.podSvc.CheckPodCriticalErrors(pollCtx, workload)
@@ -395,7 +397,7 @@ func (r *BaseResizer) verifyPostRolloutStability(ctx context.Context, workload *
 			return false, fmt.Errorf("post-rollout instability detected for %s: %s", workload.Id, reason)
 		}
 		if reason != "" {
-			log.Printf("[%s] %s", workload.Id, reason)
+			logPodReason(workload.Id, reason)
 		}
 		return false, nil
 	})
@@ -411,6 +413,25 @@ func (r *BaseResizer) verifyPostRolloutStability(ctx context.Context, workload *
 	return err
 }
 
+func logPodReason(workloadID, reason string) {
+	if strings.HasPrefix(reason, "[WARN]") {
+		log.Warn().Msgf("[%s] %s", workloadID, reason)
+		return
+	}
+
+	log.Info().Msgf("[%s] %s", workloadID, reason)
+}
+
+// rollbackAfterFailedUpdate attempts to roll back the workload to its original state if the update operation fails or if critical errors are detected during the status check after resizing.
+// It creates rollback recommendations based on the original PodTemplateSpec, attempts to apply the rollback, and verifies that the workload is stable after the rollback.
+// param ctx: The context for managing request deadlines and cancellation.
+// param updateErr: The error that occurred during the update operation or status check, which triggered the rollback.
+// param recs: The slice of Recommendations that were applied during the failed update operation, used to create corresponding rollback recommendations.
+// param w: An instance of WorkloadOps that provides methods for finding, resizing, and checking the status of workloads.
+// param workload: The Workload struct representing the workload that was resized and is now being rolled back.
+// param originalTemplate: The original PodTemplateSpec of the workload before resizing, used to create rollback recommendations.
+// param workloadCheckTimeout: The duration to wait for the workload to become stable after applying the rollback.
+// returns: An error if any issues occur during the rollback process or if the workload fails to stabilize after the rollback, or an error indicating
 func (r *BaseResizer) rollbackAfterFailedUpdate(
 	ctx context.Context,
 	updateErr error,
@@ -420,7 +441,7 @@ func (r *BaseResizer) rollbackAfterFailedUpdate(
 	originalTemplate *v1.PodTemplateSpec,
 	workloadCheckTimeout time.Duration,
 ) error {
-	log.Printf("[!!!] ERROR: %v. Rollback Started for %s", updateErr, workload.Id)
+	log.Error().Err(updateErr).Msgf("[!!!] Rollback started for %s", workload.Id)
 
 	rollbackRecs := r.CreateRollbackRecommendation(recs, *originalTemplate)
 	if len(rollbackRecs) == 0 {

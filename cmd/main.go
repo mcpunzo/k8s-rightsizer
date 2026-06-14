@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
@@ -13,6 +12,8 @@ import (
 	re "github.com/mcpunzo/k8s-rightsizer/resizeengine"
 	"github.com/mcpunzo/k8s-rightsizer/watcher"
 	"github.com/mcpunzo/k8s-rightsizer/watcher/listner"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -20,54 +21,63 @@ import (
 )
 
 func main() {
-	log.Println("--- Start Rightsizer ---")
-
 	recFile := flag.String("file-path", "", "Path to recommendations")
 	dryRun := flag.Bool("dry-run", false, "Enable dry-run mode")
 	resizeOnRecreate := flag.Bool("resize-on-recreate", false, "Allow resizing if the workload update strategy is Recreate (default: false)")
 	numberOfWorkers := flag.Int("workers", 1, "Number of concurrent workers for processing recommendations")
 	resizeStrategy := flag.String("resize-strategy", "container", "Resize strategy to use (default: container, options: container, workload)")
 	useLimits := flag.Bool("use-limits", false, "Use resource limits instead of requests for resizing (default: false)")
+	logLevel := flag.String("log-level", "info", "Log level (default: info, options: debug, info, warn, error)")
 	flag.Parse()
+
+	setLogLevel(*logLevel)
+	log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout}).
+		With().
+		Timestamp().
+		Str("app", "k8s-rightsizer").
+		Logger()
+
+	log.Info().Msg("--- Start Rightsizer ---")
 
 	checkRequiredFlags(*recFile, *resizeStrategy, *numberOfWorkers)
 
-	log.Printf("DryRun: %v", *dryRun)
-	log.Printf("Recommendations file: %v", *recFile)
-	log.Printf("Resize on Recreate: %v", *resizeOnRecreate)
-	log.Printf("Number of workers: %v", *numberOfWorkers)
-	log.Printf("Resize strategy: %v", *resizeStrategy)
-	log.Printf("Use limits: %v", *useLimits)
+	log.Info().Msgf("DryRun: %v", *dryRun)
+	log.Info().Msgf("Recommendations file: %v", *recFile)
+	log.Info().Msgf("Resize on Recreate: %v", *resizeOnRecreate)
+	log.Info().Msgf("Number of workers: %v", *numberOfWorkers)
+	log.Info().Msgf("Resize strategy: %v", *resizeStrategy)
+	log.Info().Msgf("Use limits: %v", *useLimits)
+	log.Info().Msgf("Log level: %v", *logLevel)
 
 	fileInfo, err := os.Stat(*recFile)
 	if err != nil {
-		log.Fatalf("Error in file stats: %v", err)
+		log.Fatal().Err(err).Msg("Error in file stats")
 	}
-	log.Printf("File found! Size: %d bytes", fileInfo.Size())
+	log.Info().Msgf("File found! Size: %d bytes", fileInfo.Size())
 
 	// 1. Client Initialization
 	k8sClient, err := getClientset()
 	if err != nil {
-		log.Fatalf("Fatal: %v", err)
+		log.Fatal().Err(err).Msg("Fatal error initializing Kubernetes client")
 	}
 
 	// 2. Reading Recommendations
 	recReader, err := reader.NewReader(*recFile)
 	if err != nil {
-		log.Fatalf("Error reader: %v", err)
+		log.Fatal().Err(err).Msg("Error creating recommendation reader")
 	}
 	recs, err := recReader.Read()
 	if err != nil {
-		log.Fatalf("Error reading: %v", err)
+		log.Fatal().Err(err).Msg("Error reading recommendations")
 	}
 
-	log.Printf("Recommendations read: %v", len(recs))
+	log.Info().Msgf("Recommendations read: %v", len(recs))
 
 	// 3. Execute Engine
 	resizeWatcher := watcher.NewResizeWatcher()
 	resizeIndicator := listner.NewResizeIndicator(len(recs))
 	if err := resizeWatcher.AddListener(resizeIndicator); err != nil {
-		log.Fatalf("Error adding listener: %v", err)
+		log.Fatal().Err(err).Msg("Error adding listener")
 	}
 
 	var resizer re.Resizer
@@ -77,7 +87,7 @@ func main() {
 	case "workload":
 		resizer = re.NewWorkloadResizer(k8sClient, resizeWatcher)
 	default:
-		log.Fatalf("Invalid resize strategy: %v", *resizeStrategy)
+		log.Fatal().Msgf("Invalid resize strategy: %v", *resizeStrategy)
 	}
 
 	rightsizer := re.NewWorkloadRightsizer(resizer)
@@ -87,23 +97,23 @@ func main() {
 	ctx = ctxkeys.WithNumberOfWorkers(ctx, *numberOfWorkers)
 	ctx = ctxkeys.WithUseLimits(ctx, *useLimits)
 	if err := rightsizer.Rightsize(ctx, recs); err != nil {
-		log.Printf("Resize process completed with some issues: %v", err)
+		log.Error().Err(err).Msg("Resize process completed with some issues")
 	}
 
-	log.Println("--- Rightsizer Complete ---")
+	log.Info().Msg("--- Rightsizer Complete ---")
 
 }
 
 func checkRequiredFlags(recFile, resizeStrategy string, numberOfWorkers int) {
 	if recFile == "" {
-		log.Fatal("file-path is required")
+		log.Fatal().Msg("file-path is required")
 	}
 
 	if numberOfWorkers <= 0 {
-		log.Fatal("workers parameter must be greater than 0")
+		log.Fatal().Msg("workers parameter must be greater than 0")
 	}
 	if resizeStrategy != "container" && resizeStrategy != "workload" {
-		log.Fatal("resize-strategy must be either 'container' or 'workload'")
+		log.Fatal().Msg("resize-strategy must be either 'container' or 'workload'")
 	}
 }
 
@@ -117,4 +127,20 @@ func getClientset() (*kubernetes.Clientset, error) {
 		}
 	}
 	return kubernetes.NewForConfig(config)
+}
+
+func setLogLevel(level string) {
+	switch level {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "info":
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	case "warn":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		log.Warn().Msgf("Invalid log level: %v, defaulting to info", level)
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
 }

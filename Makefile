@@ -15,6 +15,7 @@ DRY_RUN ?= false
 WORKERS ?= 1
 RESIZE_STRATEGY ?= container
 USE_LIMITS ?= false
+LOG_LEVEL ?= info
 
 # check for valid environment
 SUPPORTED_ENVS := local dev
