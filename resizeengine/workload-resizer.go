@@ -99,7 +99,7 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", recs[0].WorkloadID(), err)
 				resizeEvent := watcher.CreateResizeEvent(recs, watcher.ResizeSkipped, errMsg)
 				r.resizeWatcher.Notify(resizeEvent)
-			
+
 				results <- errMsg
 				continue
 			}
@@ -160,7 +160,7 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			r.resizeWatcher.Notify(resizeEvent)
 			results <- okMsg
 			select {
-			case <-time.After(30 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
+			case <-time.After(2 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
 			case <-ctx.Done():
 				log.Printf("Context canceled during delay, stopping ResizeJob")
 				return

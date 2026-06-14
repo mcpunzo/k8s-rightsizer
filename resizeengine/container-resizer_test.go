@@ -80,9 +80,18 @@ func newTestContainerResizer(objs ...runtime.Object) *ContainerResizer {
 // TestContainerResizer_ResizeWorkload tests the ResizeWorkload method with various scenarios
 func TestContainerResizer_ResizeWorkload(t *testing.T) {
 	t.Parallel()
+	originalInterval := WorkloadCheckInterval
+	originalDepTimeout := DeploymentCheckTimeout
+	originalStsTimeout := StatefulsetCheckTimeout
 	originalSoak := PostRolloutSoakDuration
+	WorkloadCheckInterval = 10 * time.Millisecond
+	DeploymentCheckTimeout = 120 * time.Millisecond
+	StatefulsetCheckTimeout = 120 * time.Millisecond
 	PostRolloutSoakDuration = 25 * time.Millisecond
 	t.Cleanup(func() {
+		WorkloadCheckInterval = originalInterval
+		DeploymentCheckTimeout = originalDepTimeout
+		StatefulsetCheckTimeout = originalStsTimeout
 		PostRolloutSoakDuration = originalSoak
 	})
 

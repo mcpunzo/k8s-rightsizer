@@ -17,15 +17,14 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
-const (
-	WorkloadCheckInterval   = 10 * time.Second
-	DeploymentCheckTimeout  = 15 * time.Minute
-	StatefulsetCheckTimeout = 30 * time.Minute
+var (
+	WorkloadCheckInterval                = 10 * time.Second
+	DeploymentCheckTimeout               = 15 * time.Minute
+	StatefulsetCheckTimeout              = 30 * time.Minute
+	PostRolloutSoakDuration              = 90 * time.Second
+	NodeCompatibilityRecheckWindow       = 90 * time.Second
+	NodeCompatibilityRecheckPollInterval = 10 * time.Second
 )
-
-var PostRolloutSoakDuration = 90 * time.Second
-var NodeCompatibilityRecheckWindow = 45 * time.Second
-var NodeCompatibilityRecheckPollInterval = 5 * time.Second
 
 // BaseResizer is a struct that holds common fields for resizers, such as references to deployment and stateful set workloads.
 type BaseResizer struct {
@@ -375,6 +374,11 @@ func (r *BaseResizer) ApplyResize(ctx context.Context, recs []*model.Recommendat
 	return nil
 }
 
+// verifyPostRolloutStability performs a soak test after the rollout to ensure that the workload remains stable and that no critical errors are detected in the pods after the resize operation.
+// It periodically checks the status of the workload and the pods for a specified duration after the rollout completes, and returns an error if any critical issues are detected during this period.
+// param ctx: The context for managing request deadlines and cancellation.
+// param workload: The Workload struct representing the workload that was resized.
+// returns: An error if any critical issues are detected during the post-rollout soak test, or nil if the workload remains stable throughout the test duration.
 func (r *BaseResizer) verifyPostRolloutStability(ctx context.Context, workload *k8s.Workload) error {
 	if PostRolloutSoakDuration <= 0 {
 		return nil
