@@ -41,4 +41,4 @@ spec:
         persistentVolumeClaim:
           claimName: {{ .Values.recommendations.pvcName }}
       restartPolicy: OnFailure
-  backoffLimit: 1
+  backoffLimit: 3

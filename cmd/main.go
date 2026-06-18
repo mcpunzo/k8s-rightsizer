@@ -54,9 +54,9 @@ func main() {
 	log.Info().Msgf("Post-rollout check: %v", *postRolloutCheck)
 	log.Info().Msgf("Post-rollout check interval (sec): %v", *postRolloutCheckSec)
 
-	fileInfo, err := os.Stat(*recFile)
+	fileInfo, err := waitForFile(*recFile, 5, 5*time.Second)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error in file stats")
+		log.Fatal().Err(err).Msg("Recommendations file not available after retries")
 	}
 	log.Info().Msgf("File found! Size: %d bytes", fileInfo.Size())
 
@@ -122,6 +122,18 @@ func checkRequiredFlags(recFile, resizeStrategy string, numberOfWorkers int) {
 	if resizeStrategy != "container" && resizeStrategy != "workload" {
 		log.Fatal().Msg("resize-strategy must be either 'container' or 'workload'")
 	}
+}
+
+func waitForFile(path string, maxRetries int, interval time.Duration) (os.FileInfo, error) {
+	for attempt := range maxRetries {
+		info, err := os.Stat(path)
+		if err == nil {
+			return info, nil
+		}
+		log.Warn().Err(err).Msgf("File not available (attempt %d/%d), retrying in %s...", attempt+1, maxRetries, interval)
+		time.Sleep(interval)
+	}
+	return nil, fmt.Errorf("file %s not available after %d attempts", path, maxRetries)
 }
 
 func getClientset() (*kubernetes.Clientset, error) {
