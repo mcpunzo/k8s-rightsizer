@@ -101,7 +101,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			log.Info().Msg("Context canceled, stopping ResizeJob")
 			return
 		default:
-			log.Info().Msgf("Processing recommendation for %s", rec.ContainerID())
+			log.Debug().Msgf("Processing recommendation for %s", rec.ContainerID())
 
 			workloadSvc, err := r.lookupWorkloadOps(rec.Kind)
 			if err != nil {
@@ -113,7 +113,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			}
 
 			//retrieve the current workload
-			log.Info().Msgf("Find Workload %s", rec.ContainerID())
+			log.Debug().Msgf("Find Workload %s", rec.ContainerID())
 			workload, err := workloadSvc.FindWorkload(ctx, rec)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
@@ -124,7 +124,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			}
 
 			//validate the recommendations before trying to resize, to fail fast if there are any issues with the recs (e.g. invalid values, or values that would cause errors if applied)
-			log.Info().Msgf("Validate recommendations for %s", rec.ContainerID())
+			log.Debug().Msgf("Validate recommendations for %s", rec.ContainerID())
 			if err := workload.ValidateRecommendations(ctx, rec); err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
 				resizeEvent := watcher.CreateResizeEvent([]*model.Recommendation{rec}, watcher.ResizeSkipped, errMsg)
@@ -133,7 +133,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 				continue
 			}
 
-			log.Info().Msgf("PreCheck assessment for %s", rec.ContainerID())
+			log.Debug().Msgf("PreCheck assessment for %s", rec.ContainerID())
 			err = r.ResizePrecheck(ctx, workloadSvc, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
@@ -143,7 +143,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 				continue
 			}
 
-			log.Info().Msgf("Cluster nodes assessment for %s", rec.ContainerID())
+			log.Debug().Msgf("Cluster nodes assessment for %s", rec.ContainerID())
 			err = r.NodeCheck(ctx, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", rec.ContainerID(), err)
