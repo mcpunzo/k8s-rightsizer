@@ -132,6 +132,8 @@ Below is a list of all the parameters of the k8s-rightsizer. You can use them by
 | RESIZE_STRATEGY      | container\|workload | container | container strategy applies recommendations container by container. workload strategy applies recommendations per workload, i.e. multiple recommendations for the same workload are applied at once²          |
 | USE_LIMITS              | true \| false | false     | Set cpu and memory limits on workload containers |
 | LOG_LEVEL            | debug \| info \| warn \| error | info | Set the log level |
+| POST-ROLLOUT-CHECK  | true \| false | false     | Enable a watch period after workload rollout to double-check workload status³ |
+| POST-ROLLOUT-CHECK-SEC  |  | 30     | Watch period duration un seconds |
 
 
 ¹ Using concurrent workers can be helpful for speeding up work. Considerations:
@@ -141,6 +143,8 @@ Below is a list of all the parameters of the k8s-rightsizer. You can use them by
 
 ² Workload strategy applies all the recommendations related to a workload at once. This means one rollout for workload with multiple containers. In case of rollback all the recommendations will be lost.
 The container strategy applies recommendations container by container for each workload. Every recommendation creates a new rollout, hence workload with multiple containers will restart multiple times. In case of rollback only the last recommendation will be lost.
+
+³ As this is very expensive in terms of execution time I suggest to avoid this settings by configuring minReadySeconds: 30 on your k8s workloads
 
 # 🛡️ Rollback Logic Specification
 

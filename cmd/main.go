@@ -29,6 +29,8 @@ func main() {
 	resizeStrategy := flag.String("resize-strategy", "container", "Resize strategy to use (default: container, options: container, workload)")
 	useLimits := flag.Bool("use-limits", false, "Use resource limits instead of requests for resizing (default: false)")
 	logLevel := flag.String("log-level", "info", "Log level (default: info, options: debug, info, warn, error)")
+	postRolloutCheck := flag.Bool("post-rollout-check", false, "Enable post-rollout check (default: false)")
+	postRolloutCheckSec := flag.Int("post-rollout-check-sec", 30, "Post-rollout check interval in seconds (default: 60)")
 	flag.Parse()
 
 	setLogLevel(*logLevel)
@@ -49,6 +51,8 @@ func main() {
 	log.Info().Msgf("Resize strategy: %v", *resizeStrategy)
 	log.Info().Msgf("Use limits: %v", *useLimits)
 	log.Info().Msgf("Log level: %v", *logLevel)
+	log.Info().Msgf("Post-rollout check: %v", *postRolloutCheck)
+	log.Info().Msgf("Post-rollout check interval (sec): %v", *postRolloutCheckSec)
 
 	fileInfo, err := os.Stat(*recFile)
 	if err != nil {
@@ -97,6 +101,8 @@ func main() {
 	ctx = ctxkeys.WithResizeOnRecreate(ctx, *resizeOnRecreate)
 	ctx = ctxkeys.WithNumberOfWorkers(ctx, *numberOfWorkers)
 	ctx = ctxkeys.WithUseLimits(ctx, *useLimits)
+	ctx = ctxkeys.WithPostRolloutCheck(ctx, *postRolloutCheck)
+	ctx = ctxkeys.WithPostRolloutCheckInterval(ctx, time.Duration(*postRolloutCheckSec)*time.Second)
 	if err := rightsizer.Rightsize(ctx, recs); err != nil {
 		log.Error().Err(err).Msg("Resize process completed with some issues")
 	}

@@ -83,16 +83,13 @@ func TestContainerResizer_ResizeWorkload(t *testing.T) {
 	originalInterval := WorkloadCheckInterval
 	originalDepTimeout := DeploymentCheckTimeout
 	originalStsTimeout := StatefulsetCheckTimeout
-	originalSoak := PostRolloutSoakDuration
 	WorkloadCheckInterval = 10 * time.Millisecond
 	DeploymentCheckTimeout = 120 * time.Millisecond
 	StatefulsetCheckTimeout = 120 * time.Millisecond
-	PostRolloutSoakDuration = 25 * time.Millisecond
 	t.Cleanup(func() {
 		WorkloadCheckInterval = originalInterval
 		DeploymentCheckTimeout = originalDepTimeout
 		StatefulsetCheckTimeout = originalStsTimeout
-		PostRolloutSoakDuration = originalSoak
 	})
 
 	tmpl := basePodTemplate("100m", "128Mi")
@@ -287,7 +284,13 @@ func TestContainerResizer_ResizeWorkload(t *testing.T) {
 				recs = []*model.Recommendation{tt.rec}
 			}
 
-			err := r.ApplyResize(context.Background(), recs, tt.ops, workload)
+			ctx := context.Background()
+			if tt.name == "Rollback - soak detects post-rollout crash and rollback succeeds" {
+				ctx = ctxkeys.WithPostRolloutCheck(ctx, true)
+				ctx = ctxkeys.WithPostRolloutCheckInterval(ctx, 120*time.Millisecond)
+			}
+
+			err := r.ApplyResize(ctx, recs, tt.ops, workload)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ResizeWorkload() error = %v, wantErr %v", err, tt.wantErr)

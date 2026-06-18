@@ -25,7 +25,6 @@ var (
 	WorkloadCheckInterval                = 10 * time.Second
 	DeploymentCheckTimeout               = 15 * time.Minute
 	StatefulsetCheckTimeout              = 30 * time.Minute
-	PostRolloutSoakDuration              = 90 * time.Second
 	NodeCompatibilityRecheckWindow       = 90 * time.Second
 	NodeCompatibilityRecheckPollInterval = 10 * time.Second
 	NodeCompatibilityRecheckCooldown     = 30 * time.Second
@@ -417,8 +416,10 @@ func (r *BaseResizer) ApplyResize(ctx context.Context, recs []*model.Recommendat
 		return r.rollbackAfterFailedUpdate(ctx, err, recs, w, workload, originalTemplate, workloadCheckTimeout)
 	}
 
-	if err := r.verifyPostRolloutStability(ctx, workload); err != nil {
-		return r.rollbackAfterFailedUpdate(ctx, err, recs, w, workload, originalTemplate, workloadCheckTimeout)
+	if postRolloutCheck := ctxkeys.PostRolloutCheckFromContext(ctx); postRolloutCheck {
+		if err := r.verifyPostRolloutStability(ctx, workload); err != nil {
+			return r.rollbackAfterFailedUpdate(ctx, err, recs, w, workload, originalTemplate, workloadCheckTimeout)
+		}
 	}
 
 	log.Info().Msgf("[SUCCESS] %s/%s updated and stable", workload.Namespace, workload.Name)
@@ -431,16 +432,17 @@ func (r *BaseResizer) ApplyResize(ctx context.Context, recs []*model.Recommendat
 // param workload: The Workload struct representing the workload that was resized.
 // returns: An error if any critical issues are detected during the post-rollout soak test, or nil if the workload remains stable throughout the test duration.
 func (r *BaseResizer) verifyPostRolloutStability(ctx context.Context, workload *k8s.Workload) error {
-	if PostRolloutSoakDuration <= 0 {
+	postRolloutSoakDuration := ctxkeys.PostRolloutCheckIntervalFromContext(ctx, 30*time.Second)
+	if postRolloutSoakDuration <= 0 {
 		return nil
 	}
 
-	soakCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), PostRolloutSoakDuration)
+	soakCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postRolloutSoakDuration)
 	defer cancel()
 
-	log.Info().Msgf("[%s] Starting post-rollout soak verification for %s", workload.Id, PostRolloutSoakDuration)
+	log.Info().Msgf("[%s] Starting post-rollout soak verification for %s", workload.Id, postRolloutSoakDuration)
 
-	err := wait.PollUntilContextTimeout(soakCtx, WorkloadCheckInterval, PostRolloutSoakDuration, true, func(pollCtx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(soakCtx, WorkloadCheckInterval, postRolloutSoakDuration, true, func(pollCtx context.Context) (bool, error) {
 		isError, reason := r.podSvc.CheckPodCriticalErrors(pollCtx, workload)
 		if isError {
 			return false, fmt.Errorf("post-rollout instability detected for %s: %s", workload.Id, reason)

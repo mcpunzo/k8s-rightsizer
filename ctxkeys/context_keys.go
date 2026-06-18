@@ -1,14 +1,19 @@
 package ctxkeys
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type contextKey string
 
 const (
-	DryRunKey           contextKey = "dryRun"
-	ResizeOnRecreateKey contextKey = "resizeOnRecreate"
-	NumberOfWorkersKey  contextKey = "numberOfWorkers"
-	UseLimitsKey        contextKey = "useLimits"
+	DryRunKey                   contextKey = "dryRun"
+	ResizeOnRecreateKey         contextKey = "resizeOnRecreate"
+	NumberOfWorkersKey          contextKey = "numberOfWorkers"
+	UseLimitsKey                contextKey = "useLimits"
+	PostRolloutCheckKey         contextKey = "postRolloutCheck"
+	PostRolloutCheckIntervalKey contextKey = "postRolloutCheckInterval"
 )
 
 // WithDryRun adds the dry run flag to the context.
@@ -61,4 +66,30 @@ func UseLimitsFromContext(ctx context.Context) bool {
 		return v
 	}
 	return false
+}
+
+// WithPostRolloutCheck adds the post-rollout check flag to the context.
+func WithPostRolloutCheck(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, PostRolloutCheckKey, enabled)
+}
+
+// PostRolloutCheckFromContext retrieves the post-rollout check flag from the context. It returns false if the flag is not set or if the value is not a boolean.
+func PostRolloutCheckFromContext(ctx context.Context) bool {
+	if v, ok := ctx.Value(PostRolloutCheckKey).(bool); ok {
+		return v
+	}
+	return false
+}
+
+// WithPostRolloutCheckInterval adds the post-rollout check interval to the context.
+func WithPostRolloutCheckInterval(ctx context.Context, duration time.Duration) context.Context {
+	return context.WithValue(ctx, PostRolloutCheckIntervalKey, duration)
+}
+
+// PostRolloutCheckIntervalFromContext retrieves the post-rollout check interval from the context. It returns the default interval if the value is not set or if it is not a time.Duration.
+func PostRolloutCheckIntervalFromContext(ctx context.Context, defaultInterval time.Duration) time.Duration {
+	if v, ok := ctx.Value(PostRolloutCheckIntervalKey).(time.Duration); ok {
+		return v
+	}
+	return defaultInterval
 }
