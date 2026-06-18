@@ -118,7 +118,7 @@ func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadService,
 }
 
 // NodeCheck performs checks on the cluster nodes to ensure that there are enough compatible and ready nodes to accommodate the resized pods after the resize operation.
-// It checks for namespace congestion by counting the number of pending pods in the namespace and returns an error if there are too many pending pods, which may indicate a cluster-wide scheduling issue. It also checks for architectural constraints by counting the number of compatible and ready nodes based on the specified architecture and returns an error if there are not enough compatible or ready nodes to accommodate the resized pods.
+// It checks for architectural constraints by counting the number of compatible and ready nodes based on the specified architecture and returns an error if there are not enough compatible or ready nodes to accommodate the resized pods.
 // param ctx: The context for managing request deadlines and cancellation.
 // param workload: The Workload struct representing the workload to be resized.
 // returns: An error if any issues are detected that would prevent resizing.
@@ -131,17 +131,6 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 		return fmt.Errorf("workload template cannot be nil")
 	}
 
-	// 1. Check namespace congestion: if there are already too many pending pods in the namespace, it may indicate a cluster-wide scheduling issue that would prevent our pods from starting up successfully after the resize. In that case, we should fail fast and avoid triggering a rollout that is likely to fail.
-	podList, err := r.podSvc.Find(ctx, workload.Namespace, "status.phase=Pending")
-	if err != nil {
-		return fmt.Errorf("failed to find pending pods in namespace %s: %v", workload.Namespace, err)
-	}
-
-	if len(podList) > 3 {
-		log.Warn().Msgf("Namespace %s has %d pending pods, which may indicate cluster-wide scheduling issues. Proceeding with caution.", workload.Namespace, len(podList))
-	}
-
-	//2. architectural constraints: if the workload is currently running on nodes with specific architectural constraints (e.g., GPU, ARM), we should check if there are enough available nodes with those constraints to accommodate the resized pods. If not, we should fail fast to avoid triggering a rollout that is likely to fail due to scheduling issues.
 	architecture := workload.Template.Spec.NodeSelector["kubernetes.io/arch"]
 	nodeStats, err := r.nodeSvc.Find(ctx, architecture)
 	if err != nil {
@@ -149,7 +138,7 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 	}
 
 	// if less than 50% of the total nodes are Ready, the cluster is unstable
-	if nodeStats.ReadyNodesCount < (nodeStats.NumberOfNodes / 2) {
+	if nodeStats.ReadyNodesCount*2 < nodeStats.NumberOfNodes {
 		return fmt.Errorf("cluster instability: more than 50%% of nodes are NotReady")
 	}
 
@@ -183,7 +172,7 @@ func (r *BaseResizer) waitForCompatibleNodes(ctx context.Context, architecture s
 		return errCompatibleNodesUnavailable
 	}
 
-	recheckCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), NodeCompatibilityRecheckWindow)
+	recheckCtx, cancel := context.WithTimeout(ctx, NodeCompatibilityRecheckWindow)
 	defer cancel()
 
 	err := wait.PollUntilContextTimeout(recheckCtx, NodeCompatibilityRecheckPollInterval, NodeCompatibilityRecheckWindow, true, func(pollCtx context.Context) (bool, error) {

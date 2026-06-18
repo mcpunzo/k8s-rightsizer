@@ -638,37 +638,6 @@ func TestNodeCheck(t *testing.T) {
 			errContains: "workload template cannot be nil",
 		},
 		{
-			name: "Failure - pending pods lookup fails",
-			workload: &k8s.Workload{
-				Namespace: "default",
-				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
-			},
-			reactor: func(client *fake.Clientset) {
-				client.PrependReactor("list", "pods", func(_ k8stesting.Action) (bool, runtime.Object, error) {
-					return true, nil, errors.New("pods api down")
-				})
-			},
-			wantErr:     true,
-			errContains: "failed to find pending pods",
-		},
-		{
-			name: "Warning-only - namespace congestion",
-			workload: &k8s.Workload{
-				Namespace: "default",
-				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
-			},
-			pods: []runtime.Object{
-				mkPendingPod("p1", "default"),
-				mkPendingPod("p2", "default"),
-				mkPendingPod("p3", "default"),
-				mkPendingPod("p4", "default"),
-			},
-			nodes: []runtime.Object{
-				mkNodeForCheck("n1", "amd64", true, false),
-			},
-			wantErr: false,
-		},
-		{
 			name: "Failure - nodes lookup fails",
 			workload: &k8s.Workload{
 				Namespace: "default",
@@ -692,7 +661,20 @@ func TestNodeCheck(t *testing.T) {
 				mkNodeForCheck("n1", "amd64", true, false),
 				mkNodeForCheck("n2", "amd64", false, false),
 				mkNodeForCheck("n3", "amd64", false, false),
-				mkNodeForCheck("n4", "amd64", false, false),
+			},
+			wantErr:     true,
+			errContains: "cluster instability",
+		},
+		{
+			name: "Failure - cluster instability with 3 nodes 1 ready (integer division edge case)",
+			workload: &k8s.Workload{
+				Namespace: "default",
+				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
+			},
+			nodes: []runtime.Object{
+				mkNodeForCheck("n1", "amd64", true, false),
+				mkNodeForCheck("n2", "amd64", false, false),
+				mkNodeForCheck("n3", "amd64", false, false),
 			},
 			wantErr:     true,
 			errContains: "cluster instability",
@@ -730,9 +712,6 @@ func TestNodeCheck(t *testing.T) {
 			workload: &k8s.Workload{
 				Namespace: "default",
 				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
-			},
-			pods: []runtime.Object{
-				mkPendingPod("p1", "default"),
 			},
 			nodes: []runtime.Object{
 				mkNodeForCheck("n1", "amd64", true, false),
@@ -889,13 +868,6 @@ func TestNodeCheck_CompatibleNodesRecheck(t *testing.T) {
 			t.Fatalf("expected second NodeCheck() to be faster, first=%s second=%s", firstElapsed, secondElapsed)
 		}
 	})
-}
-
-func mkPendingPod(name, namespace string) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Status:     corev1.PodStatus{Phase: corev1.PodPending},
-	}
 }
 
 func mkNodeForCheck(name, arch string, ready bool, unschedulable bool) *corev1.Node {
