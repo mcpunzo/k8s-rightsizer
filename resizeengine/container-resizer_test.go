@@ -75,6 +75,19 @@ func newTestContainerResizer(objs ...runtime.Object) *ContainerResizer {
 	return NewContainerResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher())
 }
 
+func readyNode(name, arch string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: map[string]string{"kubernetes.io/arch": arch},
+		},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{
+			Type:   corev1.NodeReady,
+			Status: corev1.ConditionTrue,
+		}}},
+	}
+}
+
 // --- TESTS ---
 
 // TestContainerResizer_ResizeWorkload tests the ResizeWorkload method with various scenarios
@@ -83,13 +96,16 @@ func TestContainerResizer_ResizeWorkload(t *testing.T) {
 	originalInterval := WorkloadCheckInterval
 	originalDepTimeout := DeploymentCheckTimeout
 	originalStsTimeout := StatefulsetCheckTimeout
+	originalDelay := InterRecommendationDelay
 	WorkloadCheckInterval = 10 * time.Millisecond
 	DeploymentCheckTimeout = 120 * time.Millisecond
 	StatefulsetCheckTimeout = 120 * time.Millisecond
+	InterRecommendationDelay = 1 * time.Millisecond
 	t.Cleanup(func() {
 		WorkloadCheckInterval = originalInterval
 		DeploymentCheckTimeout = originalDepTimeout
 		StatefulsetCheckTimeout = originalStsTimeout
+		InterRecommendationDelay = originalDelay
 	})
 
 	tmpl := basePodTemplate("100m", "128Mi")
@@ -862,6 +878,26 @@ func TestContainerResizer_IsPDBTooRestrictive(t *testing.T) {
 // TestContainerResizer_ResizeJob tests the ResizeJob worker method
 func TestContainerResizer_ResizeJob(t *testing.T) {
 	t.Parallel()
+	originalInterval := WorkloadCheckInterval
+	originalDepTimeout := DeploymentCheckTimeout
+	originalStsTimeout := StatefulsetCheckTimeout
+	originalDelay := InterRecommendationDelay
+	originalWindow := NodeCompatibilityRecheckWindow
+	originalPoll := NodeCompatibilityRecheckPollInterval
+	WorkloadCheckInterval = 10 * time.Millisecond
+	DeploymentCheckTimeout = 120 * time.Millisecond
+	StatefulsetCheckTimeout = 120 * time.Millisecond
+	InterRecommendationDelay = 1 * time.Millisecond
+	NodeCompatibilityRecheckWindow = 20 * time.Millisecond
+	NodeCompatibilityRecheckPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		WorkloadCheckInterval = originalInterval
+		DeploymentCheckTimeout = originalDepTimeout
+		StatefulsetCheckTimeout = originalStsTimeout
+		InterRecommendationDelay = originalDelay
+		NodeCompatibilityRecheckWindow = originalWindow
+		NodeCompatibilityRecheckPollInterval = originalPoll
+	})
 
 	tests := []struct {
 		name          string
@@ -996,6 +1032,26 @@ func TestContainerResizer_ResizeJob(t *testing.T) {
 // TestContainerResizer_Resize tests the top-level Resize method
 func TestContainerResizer_Resize(t *testing.T) {
 	t.Parallel()
+	originalInterval := WorkloadCheckInterval
+	originalDepTimeout := DeploymentCheckTimeout
+	originalStsTimeout := StatefulsetCheckTimeout
+	originalDelay := InterRecommendationDelay
+	originalWindow := NodeCompatibilityRecheckWindow
+	originalPoll := NodeCompatibilityRecheckPollInterval
+	WorkloadCheckInterval = 10 * time.Millisecond
+	DeploymentCheckTimeout = 120 * time.Millisecond
+	StatefulsetCheckTimeout = 120 * time.Millisecond
+	InterRecommendationDelay = 1 * time.Millisecond
+	NodeCompatibilityRecheckWindow = 20 * time.Millisecond
+	NodeCompatibilityRecheckPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		WorkloadCheckInterval = originalInterval
+		DeploymentCheckTimeout = originalDepTimeout
+		StatefulsetCheckTimeout = originalStsTimeout
+		InterRecommendationDelay = originalDelay
+		NodeCompatibilityRecheckWindow = originalWindow
+		NodeCompatibilityRecheckPollInterval = originalPoll
+	})
 
 	tests := []struct {
 		name        string
@@ -1016,6 +1072,7 @@ func TestContainerResizer_Resize(t *testing.T) {
 						},
 					},
 				},
+				readyNode("node-1", "amd64"),
 			},
 			recs: []model.Recommendation{
 				{WorkloadName: "api", Namespace: "default", Kind: model.Deployment, Container: "app", CpuRequestRecommendation: "200m", MemoryRequestRecommendation: "256Mi"},
@@ -1047,6 +1104,7 @@ func TestContainerResizer_Resize(t *testing.T) {
 						Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}}},
 					},
 				},
+				readyNode("node-1", "amd64"),
 			},
 			recs: []model.Recommendation{
 				{WorkloadName: "svc-a", Namespace: "default", Kind: model.Deployment, Container: "app", CpuRequestRecommendation: "200m", MemoryRequestRecommendation: "256Mi"},

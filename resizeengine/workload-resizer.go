@@ -161,7 +161,7 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			r.resizeWatcher.Notify(resizeEvent)
 			results <- okMsg
 			select {
-			case <-time.After(2 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
+			case <-time.After(InterRecommendationDelay):
 			case <-ctx.Done():
 				log.Info().Msg("Context canceled during delay, stopping ResizeJob")
 				return

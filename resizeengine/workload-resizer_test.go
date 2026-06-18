@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
@@ -271,6 +272,27 @@ func TestWorkloadResizer_ValidateRecommendation(t *testing.T) {
 
 func TestWorkloadResizer_ResizeJob(t *testing.T) {
 	t.Parallel()
+	originalInterval := WorkloadCheckInterval
+	originalDepTimeout := DeploymentCheckTimeout
+	originalStsTimeout := StatefulsetCheckTimeout
+	originalDelay := InterRecommendationDelay
+	originalWindow := NodeCompatibilityRecheckWindow
+	originalPoll := NodeCompatibilityRecheckPollInterval
+	WorkloadCheckInterval = 10 * time.Millisecond
+	DeploymentCheckTimeout = 120 * time.Millisecond
+	StatefulsetCheckTimeout = 120 * time.Millisecond
+	InterRecommendationDelay = 1 * time.Millisecond
+	NodeCompatibilityRecheckWindow = 20 * time.Millisecond
+	NodeCompatibilityRecheckPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		WorkloadCheckInterval = originalInterval
+		DeploymentCheckTimeout = originalDepTimeout
+		StatefulsetCheckTimeout = originalStsTimeout
+		InterRecommendationDelay = originalDelay
+		NodeCompatibilityRecheckWindow = originalWindow
+		NodeCompatibilityRecheckPollInterval = originalPoll
+	})
+
 	tests := []struct {
 		name        string
 		jobs        [][]*model.Recommendation
@@ -395,6 +417,27 @@ func TestWorkloadResizer_ResizeJob(t *testing.T) {
 
 func TestWorkloadResizer_Resize(t *testing.T) {
 	t.Parallel()
+	originalInterval := WorkloadCheckInterval
+	originalDepTimeout := DeploymentCheckTimeout
+	originalStsTimeout := StatefulsetCheckTimeout
+	originalDelay := InterRecommendationDelay
+	originalWindow := NodeCompatibilityRecheckWindow
+	originalPoll := NodeCompatibilityRecheckPollInterval
+	WorkloadCheckInterval = 10 * time.Millisecond
+	DeploymentCheckTimeout = 120 * time.Millisecond
+	StatefulsetCheckTimeout = 120 * time.Millisecond
+	InterRecommendationDelay = 1 * time.Millisecond
+	NodeCompatibilityRecheckWindow = 20 * time.Millisecond
+	NodeCompatibilityRecheckPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		WorkloadCheckInterval = originalInterval
+		DeploymentCheckTimeout = originalDepTimeout
+		StatefulsetCheckTimeout = originalStsTimeout
+		InterRecommendationDelay = originalDelay
+		NodeCompatibilityRecheckWindow = originalWindow
+		NodeCompatibilityRecheckPollInterval = originalPoll
+	})
+
 	tests := []struct {
 		name    string
 		recs    []model.Recommendation
@@ -407,6 +450,7 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 			recs: []model.Recommendation{wrRec("prod", "api", "app", "Deployment")},
 			k8sObjs: []runtime.Object{
 				wrDeployment("api", "prod", []corev1.Container{containerWithLimits("app", "100m", "128Mi", "1", "1Gi")}),
+				wrReadyNode("node-1", "amd64"),
 			},
 			workers: 1,
 			wantErr: false,
@@ -420,6 +464,7 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 			k8sObjs: []runtime.Object{
 				wrDeployment("api", "prod", []corev1.Container{containerWithLimits("app", "100m", "128Mi", "1", "1Gi")}),
 				wrDeployment("worker", "prod", []corev1.Container{containerWithLimits("job", "100m", "128Mi", "1", "1Gi")}),
+				wrReadyNode("node-1", "amd64"),
 			},
 			workers: 2,
 			wantErr: false,
@@ -459,6 +504,7 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 					containerWithLimits("app", "100m", "128Mi", "1", "1Gi"),
 					containerWithLimits("sidecar", "50m", "64Mi", "500m", "512Mi"),
 				}),
+				wrReadyNode("node-1", "amd64"),
 			},
 			workers: 1,
 			wantErr: false,
