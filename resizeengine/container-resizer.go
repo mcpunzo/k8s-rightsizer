@@ -169,7 +169,7 @@ func (r *ContainerResizer) ResizeJob(ctx context.Context, recs <-chan *model.Rec
 			results <- okMsg
 
 			select {
-			case <-time.After(2 * time.Second): // Small delay between processing recommendations to avoid overwhelming the cluster
+			case <-time.After(InterRecommendationDelay):
 			case <-ctx.Done():
 				log.Info().Msg("Context canceled during delay, stopping ResizeJob")
 				return

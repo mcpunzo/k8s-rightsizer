@@ -25,6 +25,7 @@ var (
 	WorkloadCheckInterval                = 10 * time.Second
 	DeploymentCheckTimeout               = 15 * time.Minute
 	StatefulsetCheckTimeout              = 30 * time.Minute
+	InterRecommendationDelay             = 2 * time.Second
 	NodeCompatibilityRecheckWindow       = 90 * time.Second
 	NodeCompatibilityRecheckPollInterval = 10 * time.Second
 	NodeCompatibilityRecheckCooldown     = 30 * time.Second
