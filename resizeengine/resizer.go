@@ -437,7 +437,7 @@ func (r *BaseResizer) verifyPostRolloutStability(ctx context.Context, workload *
 		return nil
 	}
 
-	soakCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postRolloutSoakDuration)
+	soakCtx, cancel := context.WithTimeout(ctx, postRolloutSoakDuration)
 	defer cancel()
 
 	log.Info().Msgf("[%s] Starting post-rollout soak verification for %s", workload.Id, postRolloutSoakDuration)
