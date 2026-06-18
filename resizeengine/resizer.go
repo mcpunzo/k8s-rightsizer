@@ -55,12 +55,12 @@ type BaseResizer struct {
 // param workload: The Workload struct representing the workload to be resized.
 // returns: An error if any issues are detected that would prevent resizing.
 func (r *BaseResizer) ResizePrecheck(ctx context.Context, w k8s.WorkloadService, workload *k8s.Workload) error {
-	log.Info().Msg("Performing ResizePrecheck")
+	log.Debug().Msg("Performing ResizePrecheck")
 	if workload == nil {
 		return fmt.Errorf("workload cannot be nil")
 	}
 
-	log.Info().Msgf("Performing pre-checks before resizing %s", workload.Id)
+	log.Debug().Msgf("Performing pre-checks before resizing %s", workload.Id)
 
 	// check if the workload is in a paused state
 	pause, err := w.IsWorkloadInPausedState(ctx, workload)
@@ -287,7 +287,7 @@ func (r *BaseResizer) CheckWorkloadStatus(ctx context.Context, w k8s.WorkloadSer
 			return true, nil
 		}
 
-		log.Info().Msgf("[%s] Rollout in progress... (%d/%d ready)", workload.Id, status.AvailableReplicas, status.ExpectedReplicas)
+		log.Debug().Msgf("[%s] Rollout in progress... (%d/%d ready)", workload.Id, status.AvailableReplicas, status.ExpectedReplicas)
 		return false, nil
 	}
 }
@@ -430,7 +430,7 @@ func (r *BaseResizer) verifyPostRolloutStability(ctx context.Context, workload *
 	soakCtx, cancel := context.WithTimeout(ctx, postRolloutSoakDuration)
 	defer cancel()
 
-	log.Info().Msgf("[%s] Starting post-rollout soak verification for %s", workload.Id, postRolloutSoakDuration)
+	log.Debug().Msgf("[%s] Starting post-rollout soak verification for %s", workload.Id, postRolloutSoakDuration)
 
 	err := wait.PollUntilContextTimeout(soakCtx, WorkloadCheckInterval, postRolloutSoakDuration, true, func(pollCtx context.Context) (bool, error) {
 		isError, reason := r.podSvc.CheckPodCriticalErrors(pollCtx, workload)
@@ -460,7 +460,7 @@ func logPodReason(workloadID, reason string) {
 		return
 	}
 
-	log.Info().Msgf("[%s] %s", workloadID, reason)
+	log.Debug().Msgf("[%s] %s", workloadID, reason)
 }
 
 // rollbackAfterFailedUpdate attempts to roll back the workload to its original state if the update operation fails or if critical errors are detected during the status check after resizing.

@@ -94,7 +94,7 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			return
 		default:
 			// all rec elements have the same WorkloadID, environment, Kind and Namespace and workload name
-			log.Info().Msgf("Processing recommendation for %s", recs[0].WorkloadID())
+			log.Debug().Msgf("Processing recommendation for %s", recs[0].WorkloadID())
 			workloadSvc, err := r.lookupWorkloadOps(recs[0].Kind)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", recs[0].WorkloadID(), err)
@@ -106,7 +106,7 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			}
 
 			//retrieve the current workload
-			log.Info().Msgf("Find Workload %s", recs[0].WorkloadID())
+			log.Debug().Msgf("Find Workload %s", recs[0].WorkloadID())
 			workload, err := workloadSvc.FindWorkload(ctx, recs[0])
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", recs[0].WorkloadID(), err)
@@ -126,7 +126,7 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 				continue
 			}
 
-			log.Info().Msgf("PreCheck assessment for %s", workload.Id)
+			log.Debug().Msgf("PreCheck assessment for %s", workload.Id)
 			err = r.ResizePrecheck(ctx, workloadSvc, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", workload.Id, err)
@@ -136,7 +136,7 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 				continue
 			}
 
-			log.Info().Msgf("Cluster nodes assessment for %s", workload.Id)
+			log.Debug().Msgf("Cluster nodes assessment for %s", workload.Id)
 			err = r.NodeCheck(ctx, workload)
 			if err != nil {
 				errMsg := fmt.Sprintf("[SKIP] skip resizing %s: %v", workload.Id, err)

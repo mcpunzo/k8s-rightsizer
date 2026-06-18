@@ -58,7 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Recommendations file not available after retries")
 	}
-	log.Info().Msgf("File found! Size: %d bytes", fileInfo.Size())
+	log.Debug().Msgf("File found! Size: %d bytes", fileInfo.Size())
 
 	// 1. Client Initialization
 	k8sClient, err := getClientset()
