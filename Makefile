@@ -13,8 +13,12 @@ ENV ?= local
 RESIZE_ON_RECREATE ?= false
 DRY_RUN ?= false
 WORKERS ?= 1
-RESIZE_STRATEGY ?= container
+RESIZE_STRATEGY ?= workload
 USE_LIMITS ?= false
+LOG_LEVEL ?= info
+POST_ROLLOUT_CHECK ?= false
+POST_ROLLOUT_CHECK_SEC ?= 30
+NODE_COMPATIBILITY_CHECK_WINDOW ?= 90
 
 # check for valid environment
 SUPPORTED_ENVS := local dev
@@ -40,7 +44,7 @@ test: clean ## Run tests
 	go test -race -v --cover ./...
 
 .PHONY: lint
-lint: $(GOLANGCI_LINT)
+lint: $(GOLANGCI_LINT) ## Run golangci-lint to check for code issues
 	@echo "🔬 Running golangci-lint..."
 	@$(GOLANGCI_LINT) run ./...
 
@@ -72,7 +76,7 @@ ifeq ($(ENV),local)
 	@echo "🚚 Loading image into Minikube..."
 	minikube image load rightsizer.tar --profile k8s-rightsizer-lab
 	@echo "🧹 Cleaning up..."
-	rm rightsizer.tar	
+	rm rightsizer.tar
 endif
 	@echo "🚀 Deploying with Helm to environment: $(ENV)..."
 	helm upgrade --install $(APP_NAME) ./k8s-rightsizer-helm \
@@ -86,7 +90,11 @@ endif
 		--set settings.resizeOnRecreate=$(RESIZE_ON_RECREATE) \
 		--set settings.workers="$(WORKERS)" \
 		--set settings.resizeStrategy=$(RESIZE_STRATEGY) \
-		--set settings.useLimits=$(USE_LIMITS)
+		--set settings.useLimits=$(USE_LIMITS) \
+		--set settings.logLevel=$(LOG_LEVEL) \
+		--set settings.postRolloutCheck=$(POST_ROLLOUT_CHECK) \
+		--set settings.postRolloutCheckSec=$(POST_ROLLOUT_CHECK_SEC) \
+		--set settings.nodeCompatibilityCheckWindow=$(NODE_COMPATIBILITY_CHECK_WINDOW)
 
 .PHONY: undeploy
 undeploy: ## Undeploy (usage: make undeploy ENV=local|dev (default local))
@@ -105,7 +113,7 @@ $(GOVULNCHECK):
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 
 .PHONY: changelog
-changelog:
+changelog: ## Generate changelog using git cliff (usage: make changelog VERSION=v0.3.0)
 ifndef VERSION
 	$(error VERSION not defined. Use: make changelog VERSION=v0.3.0)
 endif

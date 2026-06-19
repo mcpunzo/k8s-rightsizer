@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
@@ -615,33 +616,19 @@ func TestNodeCheck(t *testing.T) {
 		errContains string
 	}{
 		{
-			name: "Failure - pending pods lookup fails",
-			workload: &k8s.Workload{
-				Namespace: "default",
-				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
-			},
-			reactor: func(client *fake.Clientset) {
-				client.PrependReactor("list", "pods", func(_ k8stesting.Action) (bool, runtime.Object, error) {
-					return true, nil, errors.New("pods api down")
-				})
-			},
+			name:        "Failure - nil workload",
+			workload:    nil,
 			wantErr:     true,
-			errContains: "failed to find pending pods",
+			errContains: "workload cannot be nil",
 		},
 		{
-			name: "Failure - namespace congestion",
+			name: "Failure - nil workload template",
 			workload: &k8s.Workload{
 				Namespace: "default",
-				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
-			},
-			pods: []runtime.Object{
-				mkPendingPod("p1", "default"),
-				mkPendingPod("p2", "default"),
-				mkPendingPod("p3", "default"),
-				mkPendingPod("p4", "default"),
+				Template:  nil,
 			},
 			wantErr:     true,
-			errContains: "namespace congestion",
+			errContains: "workload template cannot be nil",
 		},
 		{
 			name: "Failure - nodes lookup fails",
@@ -667,7 +654,20 @@ func TestNodeCheck(t *testing.T) {
 				mkNodeForCheck("n1", "amd64", true, false),
 				mkNodeForCheck("n2", "amd64", false, false),
 				mkNodeForCheck("n3", "amd64", false, false),
-				mkNodeForCheck("n4", "amd64", false, false),
+			},
+			wantErr:     true,
+			errContains: "cluster instability",
+		},
+		{
+			name: "Failure - cluster instability with 3 nodes 1 ready (integer division edge case)",
+			workload: &k8s.Workload{
+				Namespace: "default",
+				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
+			},
+			nodes: []runtime.Object{
+				mkNodeForCheck("n1", "amd64", true, false),
+				mkNodeForCheck("n2", "amd64", false, false),
+				mkNodeForCheck("n3", "amd64", false, false),
 			},
 			wantErr:     true,
 			errContains: "cluster instability",
@@ -688,13 +688,23 @@ func TestNodeCheck(t *testing.T) {
 			errContains: "no compatible architecture nodes available",
 		},
 		{
+			name: "Failure - no schedulable nodes when architecture is not specified",
+			workload: &k8s.Workload{
+				Namespace: "default",
+				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{}}},
+			},
+			nodes: []runtime.Object{
+				mkNodeForCheck("n1", "arm64", true, true),
+				mkNodeForCheck("n2", "arm64", true, true),
+			},
+			wantErr:     true,
+			errContains: "no ready/schedulable nodes currently available in the cluster after",
+		},
+		{
 			name: "Success - checks pass",
 			workload: &k8s.Workload{
 				Namespace: "default",
 				Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"}}},
-			},
-			pods: []runtime.Object{
-				mkPendingPod("p1", "default"),
 			},
 			nodes: []runtime.Object{
 				mkNodeForCheck("n1", "amd64", true, false),
@@ -719,6 +729,7 @@ func TestNodeCheck(t *testing.T) {
 			}
 
 			baseResizer := &BaseResizer{
+				config:  testResizerConfig(),
 				client:  fakeClient,
 				podSvc:  k8s.NewPodService(fakeClient),
 				nodeSvc: k8s.NewNodeService(fakeClient),
@@ -737,11 +748,118 @@ func TestNodeCheck(t *testing.T) {
 	}
 }
 
-func mkPendingPod(name, namespace string) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Status:     corev1.PodStatus{Phase: corev1.PodPending},
-	}
+func TestNodeCheck_CompatibleNodesRecheck(t *testing.T) {
+	t.Parallel()
+
+	recheckConfig := testResizerConfig()
+	recheckConfig.NodeCompatibilityRecheckWindow = 40 * time.Millisecond
+	recheckConfig.NodeCompatibilityRecheckPollInterval = 10 * time.Millisecond
+	recheckConfig.NodeCompatibilityRecheckCooldown = 80 * time.Millisecond
+
+	t.Run("Success - compatible nodes appear during recheck", func(t *testing.T) {
+		workload := &k8s.Workload{
+			Namespace: "default",
+			Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{}}},
+		}
+
+		fakeClient := fake.NewSimpleClientset(
+			mkNodeForCheck("n1", "arm64", true, false),
+			mkNodeForCheck("n2", "arm64", true, false),
+		)
+
+		listCalls := 0
+		fakeClient.PrependReactor("list", "nodes", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			listCalls++
+			if listCalls < 2 {
+				return false, nil, nil
+			}
+
+			return true, &corev1.NodeList{Items: []corev1.Node{
+				*mkNodeForCheck("n1", "arm64", true, false),
+				*mkNodeForCheck("n2", "arm64", true, false),
+				*mkNodeForCheck("n3", "amd64", true, false),
+			}}, nil
+		})
+
+		baseResizer := &BaseResizer{
+			config:  recheckConfig,
+			client:  fakeClient,
+			podSvc:  k8s.NewPodService(fakeClient),
+			nodeSvc: k8s.NewNodeService(fakeClient),
+		}
+
+		err := baseResizer.NodeCheck(context.Background(), workload)
+		if err != nil {
+			t.Fatalf("NodeCheck() error = %v, want nil", err)
+		}
+	})
+
+	t.Run("Failure - compatible nodes do not appear during recheck", func(t *testing.T) {
+		workload := &k8s.Workload{
+			Namespace: "default",
+			Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{}}},
+		}
+
+		fakeClient := fake.NewSimpleClientset(
+			mkNodeForCheck("n1", "arm64", true, true),
+			mkNodeForCheck("n2", "arm64", true, true),
+		)
+
+		baseResizer := &BaseResizer{
+			config:  recheckConfig,
+			client:  fakeClient,
+			podSvc:  k8s.NewPodService(fakeClient),
+			nodeSvc: k8s.NewNodeService(fakeClient),
+		}
+
+		err := baseResizer.NodeCheck(context.Background(), workload)
+		if err == nil {
+			t.Fatal("NodeCheck() expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "no ready/schedulable nodes currently available in the cluster after") {
+			t.Fatalf("NodeCheck() error = %v, want no-compatible-nodes timeout", err)
+		}
+	})
+
+	t.Run("Failure - second check skips long recheck during cooldown", func(t *testing.T) {
+		workload := &k8s.Workload{
+			Namespace: "default",
+			Template:  &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{}}},
+		}
+
+		fakeClient := fake.NewSimpleClientset(
+			mkNodeForCheck("n1", "arm64", true, true),
+			mkNodeForCheck("n2", "arm64", true, true),
+		)
+
+		baseResizer := &BaseResizer{
+			config:  recheckConfig,
+			client:  fakeClient,
+			podSvc:  k8s.NewPodService(fakeClient),
+			nodeSvc: k8s.NewNodeService(fakeClient),
+		}
+
+		start := time.Now()
+		err := baseResizer.NodeCheck(context.Background(), workload)
+		firstElapsed := time.Since(start)
+		if err == nil {
+			t.Fatal("first NodeCheck() expected error, got nil")
+		}
+
+		start = time.Now()
+		err = baseResizer.NodeCheck(context.Background(), workload)
+		secondElapsed := time.Since(start)
+		if err == nil {
+			t.Fatal("second NodeCheck() expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "recent compatibility recheck already failed") {
+			t.Fatalf("second NodeCheck() error = %v, want cooldown fast-fail", err)
+		}
+
+		if secondElapsed >= firstElapsed {
+			t.Fatalf("expected second NodeCheck() to be faster, first=%s second=%s", firstElapsed, secondElapsed)
+		}
+	})
 }
 
 func mkNodeForCheck(name, arch string, ready bool, unschedulable bool) *corev1.Node {

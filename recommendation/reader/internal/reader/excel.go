@@ -2,7 +2,6 @@ package reader
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
@@ -23,23 +22,31 @@ func (r *ExcelReader) Read() ([]model.Recommendation, error) {
 		return nil, fmt.Errorf("error opening file: %w", err)
 	}
 	defer func() {
-		if err := f.Close(); err != nil {
-			fmt.Printf("error closing file: %v\n", err)
-		}
+		_ = f.Close()
 	}()
 
 	// let's assume the data is in the first sheet
 	sheetName := f.GetSheetName(0)
-	rows, err := f.GetRows(sheetName)
+	rows, err := f.Rows(sheetName)
 	if err != nil {
 		return nil, fmt.Errorf("error reading rows: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 
 	var recommendations []model.Recommendation
+	rowIndex := 0
 
-	// Skipping the header row (i=0) and starting from the first data row (i=1)
-	for i := 1; i < len(rows); i++ {
-		row := rows[i]
+	// Skip the first row (headers) and parse data rows as a stream.
+	for rows.Next() {
+		rowIndex++
+		if rowIndex == 1 {
+			continue
+		}
+
+		row, err := rows.Columns()
+		if err != nil {
+			return nil, fmt.Errorf("error reading row %d: %w", rowIndex, err)
+		}
 
 		// min lenght check to avoid index out of range, we expect at least 14 columns based on the struct and the excel format
 		if len(row) < 14 {
@@ -66,9 +73,19 @@ func (r *ExcelReader) Read() ([]model.Recommendation, error) {
 		recommendations = append(recommendations, rec)
 	}
 
+	if err := rows.Error(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
 	return recommendations, nil
 }
 
+// NormalizeNumericData normalizes numeric data by adding a suffix if the value is a pure number.
+// It trims whitespace and checks if the value is empty or a pure number. If it's a pure number, it appends the specified suffix.
+// If the value is not a pure number, it returns the original value.
+// param val: The string value to normalize.
+// param suffix: The suffix to append if the value is a pure number (e.g., "m" for milli, "Mi" for mebibytes).
+// returns: The normalized string value with the suffix added if applicable.
 func NormalizeNumericData(val string, suffix string) string {
 	val = strings.TrimSpace(val)
 	if val == "" {
@@ -76,9 +93,27 @@ func NormalizeNumericData(val string, suffix string) string {
 	}
 
 	// if val is a pure number then add suffix
-	if isNumeric := regexp.MustCompile(`^[0-9]+$`).MatchString(val); isNumeric {
+	if isAllDigits(val) {
 		return val + suffix
 	}
 
 	return val
+}
+
+// isAllDigits checks if a string consists entirely of digits (0-9).
+// It returns true if the string is non-empty and contains only digit characters, and false otherwise.
+// param s: The string to check.
+// returns: A boolean indicating whether the string consists entirely of digits.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+
+	return true
 }

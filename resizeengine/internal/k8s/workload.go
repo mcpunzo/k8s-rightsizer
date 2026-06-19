@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/mcpunzo/k8s-rightsizer/ctxkeys"
 	"github.com/mcpunzo/k8s-rightsizer/model"
@@ -79,7 +80,7 @@ func (w *Workload) ResizeContainer(ctx context.Context, rec *model.Recommendatio
 				if useLimits {
 					msg = fmt.Sprintf("Container %s in workload %s: resource requests and limits already match the recommendation", c.Name, rec.WorkloadName)
 				}
-				log.Print(msg)
+				log.Info().Msg(msg)
 				return false, errors.New(msg)
 			}
 
@@ -100,7 +101,7 @@ func (w *Workload) ResizeContainer(ctx context.Context, rec *model.Recommendatio
 	}
 
 	msg := fmt.Sprintf("Container %s not found in %s %s", rec.Container, rec.Kind, rec.WorkloadName)
-	log.Print(msg)
+	log.Info().Msg(msg)
 	return false, errors.New(msg)
 }
 
@@ -156,14 +157,14 @@ func (w *Workload) ValidateRecommendations(ctx context.Context, rec *model.Recom
 
 		if cpurequestAlreadyMatch && memRequestAlreadyMatch {
 			msg := fmt.Sprintf("Container %s in workload %s: resource requests already match the recommendation", container.Name, rec.WorkloadName)
-			log.Print(msg)
+			log.Info().Msg(msg)
 			return errors.New(msg)
 		}
 
 	} else {
 		if cpurequestAlreadyMatch && memRequestAlreadyMatch && cpuLimitAlreadyMatch && memLimitAlreadyMatch {
 			msg := fmt.Sprintf("Container %s in workload %s: resource requests and limits already match the recommendation", container.Name, rec.WorkloadName)
-			log.Print(msg)
+			log.Info().Msg(msg)
 			return errors.New(msg)
 		}
 	}

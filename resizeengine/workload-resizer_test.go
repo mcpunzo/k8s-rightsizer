@@ -73,7 +73,7 @@ func wrReadyNode(name, arch string) *corev1.Node {
 }
 
 func newTestWorkloadResizer(objs ...runtime.Object) *WorkloadResizer {
-	return NewWorkloadResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher())
+	return NewWorkloadResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher(), testResizerConfig())
 }
 
 // --- TestWorkloadResizer_ArrangeRecsByWorkload ---
@@ -271,6 +271,7 @@ func TestWorkloadResizer_ValidateRecommendation(t *testing.T) {
 
 func TestWorkloadResizer_ResizeJob(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name        string
 		jobs        [][]*model.Recommendation
@@ -354,7 +355,7 @@ func TestWorkloadResizer_ResizeJob(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fakeClient := fake.NewSimpleClientset(tt.k8sObjs...)
-			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher())
+			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher(), testResizerConfig())
 
 			ctx := context.Background()
 			if tt.cancelCtx {
@@ -395,6 +396,7 @@ func TestWorkloadResizer_ResizeJob(t *testing.T) {
 
 func TestWorkloadResizer_Resize(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name    string
 		recs    []model.Recommendation
@@ -407,6 +409,7 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 			recs: []model.Recommendation{wrRec("prod", "api", "app", "Deployment")},
 			k8sObjs: []runtime.Object{
 				wrDeployment("api", "prod", []corev1.Container{containerWithLimits("app", "100m", "128Mi", "1", "1Gi")}),
+				wrReadyNode("node-1", "amd64"),
 			},
 			workers: 1,
 			wantErr: false,
@@ -420,6 +423,7 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 			k8sObjs: []runtime.Object{
 				wrDeployment("api", "prod", []corev1.Container{containerWithLimits("app", "100m", "128Mi", "1", "1Gi")}),
 				wrDeployment("worker", "prod", []corev1.Container{containerWithLimits("job", "100m", "128Mi", "1", "1Gi")}),
+				wrReadyNode("node-1", "amd64"),
 			},
 			workers: 2,
 			wantErr: false,
@@ -459,6 +463,7 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 					containerWithLimits("app", "100m", "128Mi", "1", "1Gi"),
 					containerWithLimits("sidecar", "50m", "64Mi", "500m", "512Mi"),
 				}),
+				wrReadyNode("node-1", "amd64"),
 			},
 			workers: 1,
 			wantErr: false,
@@ -469,7 +474,7 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fakeClient := fake.NewSimpleClientset(tt.k8sObjs...)
-			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher())
+			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher(), testResizerConfig())
 
 			err := r.Resize(context.Background(), tt.recs, tt.workers)
 

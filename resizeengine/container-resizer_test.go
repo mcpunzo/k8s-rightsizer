@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // --- MOCKS ---
@@ -70,7 +72,32 @@ func stableStatus() *k8s.WorkloadStatus {
 }
 
 func newTestContainerResizer(objs ...runtime.Object) *ContainerResizer {
-	return NewContainerResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher())
+	return NewContainerResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher(), testResizerConfig())
+}
+
+func testResizerConfig() ResizerConfig {
+	return ResizerConfig{
+		WorkloadCheckInterval:                10 * time.Millisecond,
+		DeploymentCheckTimeout:               120 * time.Millisecond,
+		StatefulsetCheckTimeout:              120 * time.Millisecond,
+		InterRecommendationDelay:             1 * time.Millisecond,
+		NodeCompatibilityRecheckWindow:       20 * time.Millisecond,
+		NodeCompatibilityRecheckPollInterval: 5 * time.Millisecond,
+		NodeCompatibilityRecheckCooldown:     30 * time.Second,
+	}
+}
+
+func readyNode(name, arch string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: map[string]string{"kubernetes.io/arch": arch},
+		},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{
+			Type:   corev1.NodeReady,
+			Status: corev1.ConditionTrue,
+		}}},
+	}
 }
 
 // --- TESTS ---
@@ -78,6 +105,7 @@ func newTestContainerResizer(objs ...runtime.Object) *ContainerResizer {
 // TestContainerResizer_ResizeWorkload tests the ResizeWorkload method with various scenarios
 func TestContainerResizer_ResizeWorkload(t *testing.T) {
 	t.Parallel()
+
 	tmpl := basePodTemplate("100m", "128Mi")
 
 	tests := []struct {
@@ -146,6 +174,28 @@ func TestContainerResizer_ResizeWorkload(t *testing.T) {
 			errContains: "failed to update workload",
 		},
 		{
+			name: "Rollback - soak detects post-rollout crash and rollback succeeds",
+			rec:  &model.Recommendation{Namespace: "default", WorkloadName: "api", Container: "app"},
+			ops: func() *mockWorkloadOps {
+				return &mockWorkloadOps{
+					findFunc: func() (*k8s.Workload, error) {
+						return &k8s.Workload{
+							Id:            "default-deployment-api",
+							Name:          "api",
+							Namespace:     "default",
+							Template:      tmpl.DeepCopy(),
+							LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}},
+						}, nil
+					},
+					resizeFunc:   func() error { return nil },
+					statusFunc:   func() (*k8s.WorkloadStatus, error) { return stableStatus(), nil },
+					isPausedFunc: func() (bool, error) { return false, nil },
+				}
+			}(),
+			wantErr:     true,
+			errContains: "update canceled and rollback completed successfully",
+		},
+		{
 			name: "Rollback - crash detected during polling, rollback succeeds",
 			rec:  &model.Recommendation{Namespace: "default", WorkloadName: "api", Container: "app"},
 			ops: func() *mockWorkloadOps {
@@ -209,7 +259,32 @@ func TestContainerResizer_ResizeWorkload(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := newTestContainerResizer()
+			r := NewContainerResizer(fake.NewSimpleClientset(), watcher.NewResizeWatcher(), testResizerConfig())
+
+			if tt.name == "Rollback - soak detects post-rollout crash and rollback succeeds" {
+				var podListCalls int32
+				fakeClient := fake.NewSimpleClientset()
+				fakeClient.PrependReactor("list", "pods", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+					call := atomic.AddInt32(&podListCalls, 1)
+					if call == 2 {
+						return true, &corev1.PodList{Items: []corev1.Pod{{
+							ObjectMeta: metav1.ObjectMeta{Name: "pod-crash", Namespace: "default", Labels: map[string]string{"app": "api"}},
+							Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+								State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+							}}},
+						}}}, nil
+					}
+
+					return true, &corev1.PodList{Items: []corev1.Pod{{
+						ObjectMeta: metav1.ObjectMeta{Name: "pod-ok", Namespace: "default", Labels: map[string]string{"app": "api"}},
+						Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+						}}},
+					}}}, nil
+				})
+
+				r = NewContainerResizer(fakeClient, watcher.NewResizeWatcher(), testResizerConfig())
+			}
 
 			var workload *k8s.Workload
 			if tt.ops.findFunc != nil {
@@ -223,7 +298,13 @@ func TestContainerResizer_ResizeWorkload(t *testing.T) {
 				recs = []*model.Recommendation{tt.rec}
 			}
 
-			err := r.ApplyResize(context.Background(), recs, tt.ops, workload)
+			ctx := context.Background()
+			if tt.name == "Rollback - soak detects post-rollout crash and rollback succeeds" {
+				ctx = ctxkeys.WithPostRolloutCheck(ctx, true)
+				ctx = ctxkeys.WithPostRolloutCheckInterval(ctx, 120*time.Millisecond)
+			}
+
+			err := r.ApplyResize(ctx, recs, tt.ops, workload)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ResizeWorkload() error = %v, wantErr %v", err, tt.wantErr)
@@ -479,7 +560,7 @@ func TestContainerResizer_CheckPodCriticalErrors(t *testing.T) {
 				},
 			},
 			wantIsError: true,
-			wantReason:  "OOMKilled: Insufficient memory for startup",
+			wantReason:  "Container terminated with reason: OOMKilled",
 		},
 		{
 			name: "OOMKilled detected in last termination state",
@@ -494,10 +575,40 @@ func TestContainerResizer_CheckPodCriticalErrors(t *testing.T) {
 				},
 			},
 			wantIsError: true,
-			wantReason:  "OOMKilled detected in the last restart",
+			wantReason:  "Container recently terminated with reason: OOMKilled",
 		},
 		{
-			name: "Pod unschedulable",
+			name: "ErrImagePull detected",
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: "pod-err-image", Namespace: "default", Labels: appLabels},
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ErrImagePull"}}},
+						},
+					},
+				},
+			},
+			wantIsError: true,
+			wantReason:  "Container in error: ErrImagePull",
+		},
+		{
+			name: "Init container failure detected",
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: "pod-init-fail", Namespace: "default", Labels: appLabels},
+					Status: corev1.PodStatus{
+						InitContainerStatuses: []corev1.ContainerStatus{
+							{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}},
+						},
+					},
+				},
+			},
+			wantIsError: true,
+			wantReason:  "Container in error: CrashLoopBackOff",
+		},
+		{
+			name: "Pod unschedulable due to resource pressure",
 			pods: []runtime.Object{
 				&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{Name: "pod-pending", Namespace: "default", Labels: appLabels},
@@ -509,8 +620,24 @@ func TestContainerResizer_CheckPodCriticalErrors(t *testing.T) {
 					},
 				},
 			},
+			wantIsError: false,
+			wantReason:  "Autoscaler may add nodes",
+		},
+		{
+			name: "Pod unschedulable due to hard scheduling constraint",
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: "pod-pending-hard", Namespace: "default", Labels: appLabels},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodPending,
+						Conditions: []corev1.PodCondition{
+							{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: "Unschedulable", Message: "0/3 nodes are available: 3 node(s) didn't match node selector."},
+						},
+					},
+				},
+			},
 			wantIsError: true,
-			wantReason:  "Insufficient resources in the cluster",
+			wantReason:  "Likely not recoverable via autoscaler",
 		},
 		{
 			name:        "No pods - no errors",
@@ -903,6 +1030,7 @@ func TestContainerResizer_Resize(t *testing.T) {
 						},
 					},
 				},
+				readyNode("node-1", "amd64"),
 			},
 			recs: []model.Recommendation{
 				{WorkloadName: "api", Namespace: "default", Kind: model.Deployment, Container: "app", CpuRequestRecommendation: "200m", MemoryRequestRecommendation: "256Mi"},
@@ -934,6 +1062,7 @@ func TestContainerResizer_Resize(t *testing.T) {
 						Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}}},
 					},
 				},
+				readyNode("node-1", "amd64"),
 			},
 			recs: []model.Recommendation{
 				{WorkloadName: "svc-a", Namespace: "default", Kind: model.Deployment, Container: "app", CpuRequestRecommendation: "200m", MemoryRequestRecommendation: "256Mi"},

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -208,7 +209,7 @@ func TestCheckPodCriticalErrors(t *testing.T) {
 			wantReason:  "Container in error: CrashLoopBackOff",
 		},
 		{
-			name:      "Pod pending with unschedulable",
+			name:      "Pod pending with unschedulable due to resource pressure",
 			namespace: "default",
 			labels:    map[string]string{"app": "test"},
 			pods: []runtime.Object{
@@ -231,8 +232,35 @@ func TestCheckPodCriticalErrors(t *testing.T) {
 					},
 				},
 			},
+			wantIsError: false,
+			wantReason:  "Autoscaler may add nodes",
+		},
+		{
+			name:      "Pod pending with unschedulable due to node selector mismatch",
+			namespace: "default",
+			labels:    map[string]string{"app": "test"},
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-pending-selector",
+						Namespace: "default",
+						Labels:    map[string]string{"app": "test"},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodPending,
+						Conditions: []corev1.PodCondition{
+							{
+								Type:    corev1.PodScheduled,
+								Status:  corev1.ConditionFalse,
+								Reason:  "Unschedulable",
+								Message: "0/3 nodes are available: 3 node(s) didn't match node selector.",
+							},
+						},
+					},
+				},
+			},
 			wantIsError: true,
-			wantReason:  "Insufficient resources in the cluster",
+			wantReason:  "Likely not recoverable via autoscaler",
 		},
 		{
 			name:      "Container OOMKilled",
@@ -260,7 +288,33 @@ func TestCheckPodCriticalErrors(t *testing.T) {
 				},
 			},
 			wantIsError: true,
-			wantReason:  "OOMKilled: Insufficient memory for startup",
+			wantReason:  "Container terminated with reason: OOMKilled",
+		},
+		{
+			name:      "Container waiting ErrImagePull",
+			namespace: "default",
+			labels:    map[string]string{"app": "test"},
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-err-image-pull",
+						Namespace: "default",
+						Labels:    map[string]string{"app": "test"},
+					},
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "container-1",
+								State: corev1.ContainerState{
+									Waiting: &corev1.ContainerStateWaiting{Reason: "ErrImagePull"},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantIsError: true,
+			wantReason:  "Container in error: ErrImagePull",
 		},
 		{
 			name:      "ImagePullBackOff",
@@ -314,13 +368,111 @@ func TestCheckPodCriticalErrors(t *testing.T) {
 				},
 			},
 			wantIsError: true,
-			wantReason:  "OOMKilled detected in the last restart: Insufficient memory for startup",
+			wantReason:  "Container recently terminated with reason: OOMKilled",
+		},
+		{
+			name:      "Init container in CrashLoopBackOff",
+			namespace: "default",
+			labels:    map[string]string{"app": "test"},
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-init-crash",
+						Namespace: "default",
+						Labels:    map[string]string{"app": "test"},
+					},
+					Status: corev1.PodStatus{
+						InitContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "init-setup",
+								State: corev1.ContainerState{
+									Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantIsError: true,
+			wantReason:  "Container in error: CrashLoopBackOff",
+		},
+		{
+			name:      "Ignore terminating pod in CrashLoopBackOff",
+			namespace: "default",
+			labels:    map[string]string{"app": "test"},
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "pod-terminating-crash",
+						Namespace:         "default",
+						Labels:            map[string]string{"app": "test"},
+						DeletionTimestamp: func() *metav1.Time { t := metav1.Now(); return &t }(),
+					},
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "container-1",
+								State: corev1.ContainerState{
+									Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantIsError: false,
+			wantReason:  "",
+		},
+		{
+			name:      "Ignore stale last termination OOMKilled",
+			namespace: "default",
+			labels:    map[string]string{"app": "test"},
+			pods: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-stale-oom",
+						Namespace: "default",
+						Labels:    map[string]string{"app": "test"},
+					},
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "container-1",
+								LastTerminationState: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										Reason:     "OOMKilled",
+										FinishedAt: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+									},
+								},
+								State: corev1.ContainerState{
+									Running: &corev1.ContainerStateRunning{},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantIsError: false,
+			wantReason:  "",
+		},
+		{
+			name:        "Pod list API failure is warning, not fatal",
+			namespace:   "default",
+			labels:      map[string]string{"app": "test"},
+			pods:        []runtime.Object{},
+			wantIsError: false,
+			wantReason:  "[WARN] failed to list pods",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(tt.pods...)
+			if tt.name == "Pod list API failure is warning, not fatal" {
+				fakeClient.PrependReactor("list", "pods", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("client rate limiter Wait returned an error: context deadline exceeded")
+				})
+			}
 
 			podSvc := &PodService{
 				client: fakeClient,
@@ -348,8 +500,13 @@ func TestCheckPodCriticalErrors(t *testing.T) {
 				t.Errorf("CheckPodCriticalErrors() reason = %q, want to contain %q", reason, tt.wantReason)
 			}
 
-			if !tt.wantIsError && reason != "" {
-				t.Errorf("CheckPodCriticalErrors() expected no reason, got %q", reason)
+			if !tt.wantIsError {
+				if tt.wantReason == "" && reason != "" {
+					t.Errorf("CheckPodCriticalErrors() expected no reason, got %q", reason)
+				}
+				if tt.wantReason != "" && !strings.Contains(reason, tt.wantReason) {
+					t.Errorf("CheckPodCriticalErrors() reason = %q, want to contain %q", reason, tt.wantReason)
+				}
 			}
 		})
 	}

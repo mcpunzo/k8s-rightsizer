@@ -79,7 +79,7 @@ Minikube needs the image in its internal registry. When using Podman, the most r
 make image-build REGISTRY_USER=localhost TAG=local
 
 # 2. Load image into Minikube and deploy via helm
-make deploy
+make deploy NODE_COMPATIBILITY_CHECK_WINDOW=0
 ```
 
 ### 3. Cleanup
@@ -128,18 +128,26 @@ Below is a list of all the parameters of the k8s-rightsizer. You can use them by
 | ENV                  | local \| dev  | local     | The tool execution environment                                   |
 | RESIZE_ON_RECREATE   | true \| false | false     | Whether to resize workload with update strategy Recreate         |
 | DRY_RUN              | true \| false | false     | Plan the execution without resizing containers                   |
-| WORKERS              |               | 1         | Number of concurrent resizing workers¹                           |
-| RESIZE_STRATEGY      | container\|workload | container | container strategy applies recommendations container by container. workload strategy applies recommendations per workload, i.e. multiple recommendations for the same workload are applied at once²          |
-| USE_LIMITS              | true \| false | false     | Set cpu and memory limits on workload containers 
+| WORKERS              |               | 1         | Number of concurrent resizing workers<sup>1</sup>                           |
+| RESIZE_STRATEGY      | container\|workload | workload | container strategy applies recommendations container by container. workload strategy applies recommendations per workload, i.e. multiple recommendations for the same workload are applied at once<sup>2</sup>          |
+| USE_LIMITS              | true \| false | false     | Set cpu and memory limits on workload containers |
+| LOG_LEVEL            | debug \| info \| warn \| error | info | Set the log level |
+| POST-ROLLOUT-CHECK  | true \| false | false     | Enable a watch period after workload rollout to double-check workload status<sup>3</sup> |
+| POST-ROLLOUT-CHECK-SEC  |  | 30     | Watch period duration un seconds |
+| NODE-COMPATIBILITY-CHECK-WINDOW | | 90 | Time window in secs for checking that the cluster has schedulable nodes for the new pods before apply resizing <sup>4</sup>
 
-
-¹ Using concurrent workers can be helpful for speeding up work. Considerations:
+<sup>1</sup> Using concurrent workers can be helpful for speeding up work. Considerations:
 - 3-5 workers are a safe and prudent threshold
 - 10 workers for robust clusters with small microservices
 - 20+ workers is not recommended as it may cause **node pressure**
 
-² Workload strategy applies all the recommendations related to a workload at once. This means one rollout for workload with multiple containers. In case of rollback all the recommendations will be lost.
+<sup>2</sup> Workload strategy applies all the recommendations related to a workload at once. This means one rollout for workload with multiple containers. In case of rollback all the recommendations will be lost.
 The container strategy applies recommendations container by container for each workload. Every recommendation creates a new rollout, hence workload with multiple containers will restart multiple times. In case of rollback only the last recommendation will be lost.
+
+<sup>3</sup> As this is very expensive in terms of execution time I suggest to avoid this settings by configuring minReadySeconds: 30 on your k8s workloads
+
+<sup>4</sup> In environments with no node autoscaler, this should be set to 0 to avoid unuseful waiting
+
 
 # 🛡️ Rollback Logic Specification
 
