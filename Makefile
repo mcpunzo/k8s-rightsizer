@@ -44,7 +44,7 @@ test: clean ## Run tests
 	go test -race -v --cover ./...
 
 .PHONY: lint
-lint: $(GOLANGCI_LINT)
+lint: $(GOLANGCI_LINT) ## Run golangci-lint to check for code issues
 	@echo "🔬 Running golangci-lint..."
 	@$(GOLANGCI_LINT) run ./...
 
@@ -113,7 +113,7 @@ $(GOVULNCHECK):
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 
 .PHONY: changelog
-changelog:
+changelog: ## Generate changelog using git cliff (usage: make changelog VERSION=v0.3.0)
 ifndef VERSION
 	$(error VERSION not defined. Use: make changelog VERSION=v0.3.0)
 endif
