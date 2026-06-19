@@ -41,9 +41,11 @@ func (r *ResizeIndicator) HandleResizeEvent(event *watcher.ResizeEvent) {
 	r.RecommendationProcessed += len(event.Recommendation)
 	r.StatusMap[event.Status] += len(event.Recommendation)
 
-	log.Info().Msgf("ResizeIndicator: Processed %d/%d recommendations", r.RecommendationProcessed, r.NumberOfRecommendations)
-
-	log.Info().Msgf("%s/%d, %s/%d, %s/%d, %s/%d, %s/%d", watcher.ResizeSucceeded, r.StatusMap[watcher.ResizeSucceeded],
-		watcher.ResizeFailed, r.StatusMap[watcher.ResizeFailed], watcher.ResizeRollbackSucceeded, r.StatusMap[watcher.ResizeRollbackSucceeded], watcher.ResizeRollbackFailed, r.StatusMap[watcher.ResizeRollbackFailed], watcher.ResizeSkipped, r.StatusMap[watcher.ResizeSkipped])
+	log.Info().Msgf("ResizeIndicator: Processed %d/%d, %s/%d, %s/%d, %s/%d, %s/%d, %s/%d", r.RecommendationProcessed, r.NumberOfRecommendations,
+		watcher.ResizeSucceeded, r.StatusMap[watcher.ResizeSucceeded],
+		watcher.ResizeFailed, r.StatusMap[watcher.ResizeFailed],
+		watcher.ResizeRollbackSucceeded, r.StatusMap[watcher.ResizeRollbackSucceeded],
+		watcher.ResizeRollbackFailed, r.StatusMap[watcher.ResizeRollbackFailed],
+		watcher.ResizeSkipped, r.StatusMap[watcher.ResizeSkipped])
 
 }

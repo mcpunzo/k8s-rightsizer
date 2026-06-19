@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
@@ -74,7 +73,7 @@ func wrReadyNode(name, arch string) *corev1.Node {
 }
 
 func newTestWorkloadResizer(objs ...runtime.Object) *WorkloadResizer {
-	return NewWorkloadResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher())
+	return NewWorkloadResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher(), testResizerConfig())
 }
 
 // --- TestWorkloadResizer_ArrangeRecsByWorkload ---
@@ -272,26 +271,6 @@ func TestWorkloadResizer_ValidateRecommendation(t *testing.T) {
 
 func TestWorkloadResizer_ResizeJob(t *testing.T) {
 	t.Parallel()
-	originalInterval := WorkloadCheckInterval
-	originalDepTimeout := DeploymentCheckTimeout
-	originalStsTimeout := StatefulsetCheckTimeout
-	originalDelay := InterRecommendationDelay
-	originalWindow := NodeCompatibilityRecheckWindow
-	originalPoll := NodeCompatibilityRecheckPollInterval
-	WorkloadCheckInterval = 10 * time.Millisecond
-	DeploymentCheckTimeout = 120 * time.Millisecond
-	StatefulsetCheckTimeout = 120 * time.Millisecond
-	InterRecommendationDelay = 1 * time.Millisecond
-	NodeCompatibilityRecheckWindow = 20 * time.Millisecond
-	NodeCompatibilityRecheckPollInterval = 5 * time.Millisecond
-	t.Cleanup(func() {
-		WorkloadCheckInterval = originalInterval
-		DeploymentCheckTimeout = originalDepTimeout
-		StatefulsetCheckTimeout = originalStsTimeout
-		InterRecommendationDelay = originalDelay
-		NodeCompatibilityRecheckWindow = originalWindow
-		NodeCompatibilityRecheckPollInterval = originalPoll
-	})
 
 	tests := []struct {
 		name        string
@@ -376,7 +355,7 @@ func TestWorkloadResizer_ResizeJob(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fakeClient := fake.NewSimpleClientset(tt.k8sObjs...)
-			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher())
+			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher(), testResizerConfig())
 
 			ctx := context.Background()
 			if tt.cancelCtx {
@@ -417,26 +396,6 @@ func TestWorkloadResizer_ResizeJob(t *testing.T) {
 
 func TestWorkloadResizer_Resize(t *testing.T) {
 	t.Parallel()
-	originalInterval := WorkloadCheckInterval
-	originalDepTimeout := DeploymentCheckTimeout
-	originalStsTimeout := StatefulsetCheckTimeout
-	originalDelay := InterRecommendationDelay
-	originalWindow := NodeCompatibilityRecheckWindow
-	originalPoll := NodeCompatibilityRecheckPollInterval
-	WorkloadCheckInterval = 10 * time.Millisecond
-	DeploymentCheckTimeout = 120 * time.Millisecond
-	StatefulsetCheckTimeout = 120 * time.Millisecond
-	InterRecommendationDelay = 1 * time.Millisecond
-	NodeCompatibilityRecheckWindow = 20 * time.Millisecond
-	NodeCompatibilityRecheckPollInterval = 5 * time.Millisecond
-	t.Cleanup(func() {
-		WorkloadCheckInterval = originalInterval
-		DeploymentCheckTimeout = originalDepTimeout
-		StatefulsetCheckTimeout = originalStsTimeout
-		InterRecommendationDelay = originalDelay
-		NodeCompatibilityRecheckWindow = originalWindow
-		NodeCompatibilityRecheckPollInterval = originalPoll
-	})
 
 	tests := []struct {
 		name    string
@@ -515,7 +474,7 @@ func TestWorkloadResizer_Resize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fakeClient := fake.NewSimpleClientset(tt.k8sObjs...)
-			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher())
+			r := NewWorkloadResizer(fakeClient, watcher.NewResizeWatcher(), testResizerConfig())
 
 			err := r.Resize(context.Background(), tt.recs, tt.workers)
 

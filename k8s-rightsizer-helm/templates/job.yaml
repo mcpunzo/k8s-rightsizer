@@ -33,6 +33,15 @@ spec:
           {{- if .Values.settings.useLimits }}
           - "--use-limits"
           {{- end }}
+          - "--log-level"
+          - "{{ .Values.settings.logLevel }}"
+          {{- if .Values.settings.postRolloutCheck }}
+          - "--post-rollout-check"
+          {{- end }}
+          - "--post-rollout-check-sec"
+          - "{{ .Values.settings.postRolloutCheckSec }}"
+          - "--node-compatibility-check-window"
+          - "{{ .Values.settings.nodeCompatibilityCheckWindow }}"
         volumeMounts:
         - name: recommendations-storage
           mountPath: {{ .Values.recommendations.mountPath }}

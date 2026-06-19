@@ -604,14 +604,7 @@ func TestResizePrecheck(t *testing.T) {
 }
 
 func TestNodeCheck(t *testing.T) {
-	originalWindow := NodeCompatibilityRecheckWindow
-	originalPoll := NodeCompatibilityRecheckPollInterval
-	NodeCompatibilityRecheckWindow = 40 * time.Millisecond
-	NodeCompatibilityRecheckPollInterval = 10 * time.Millisecond
-	t.Cleanup(func() {
-		NodeCompatibilityRecheckWindow = originalWindow
-		NodeCompatibilityRecheckPollInterval = originalPoll
-	})
+	t.Parallel()
 
 	tests := []struct {
 		name        string
@@ -736,6 +729,7 @@ func TestNodeCheck(t *testing.T) {
 			}
 
 			baseResizer := &BaseResizer{
+				config:  testResizerConfig(),
 				client:  fakeClient,
 				podSvc:  k8s.NewPodService(fakeClient),
 				nodeSvc: k8s.NewNodeService(fakeClient),
@@ -755,17 +749,12 @@ func TestNodeCheck(t *testing.T) {
 }
 
 func TestNodeCheck_CompatibleNodesRecheck(t *testing.T) {
-	originalWindow := NodeCompatibilityRecheckWindow
-	originalPoll := NodeCompatibilityRecheckPollInterval
-	originalCooldown := NodeCompatibilityRecheckCooldown
-	NodeCompatibilityRecheckWindow = 40 * time.Millisecond
-	NodeCompatibilityRecheckPollInterval = 10 * time.Millisecond
-	NodeCompatibilityRecheckCooldown = 80 * time.Millisecond
-	t.Cleanup(func() {
-		NodeCompatibilityRecheckWindow = originalWindow
-		NodeCompatibilityRecheckPollInterval = originalPoll
-		NodeCompatibilityRecheckCooldown = originalCooldown
-	})
+	t.Parallel()
+
+	recheckConfig := testResizerConfig()
+	recheckConfig.NodeCompatibilityRecheckWindow = 40 * time.Millisecond
+	recheckConfig.NodeCompatibilityRecheckPollInterval = 10 * time.Millisecond
+	recheckConfig.NodeCompatibilityRecheckCooldown = 80 * time.Millisecond
 
 	t.Run("Success - compatible nodes appear during recheck", func(t *testing.T) {
 		workload := &k8s.Workload{
@@ -793,6 +782,7 @@ func TestNodeCheck_CompatibleNodesRecheck(t *testing.T) {
 		})
 
 		baseResizer := &BaseResizer{
+			config:  recheckConfig,
 			client:  fakeClient,
 			podSvc:  k8s.NewPodService(fakeClient),
 			nodeSvc: k8s.NewNodeService(fakeClient),
@@ -816,6 +806,7 @@ func TestNodeCheck_CompatibleNodesRecheck(t *testing.T) {
 		)
 
 		baseResizer := &BaseResizer{
+			config:  recheckConfig,
 			client:  fakeClient,
 			podSvc:  k8s.NewPodService(fakeClient),
 			nodeSvc: k8s.NewNodeService(fakeClient),
@@ -842,6 +833,7 @@ func TestNodeCheck_CompatibleNodesRecheck(t *testing.T) {
 		)
 
 		baseResizer := &BaseResizer{
+			config:  recheckConfig,
 			client:  fakeClient,
 			podSvc:  k8s.NewPodService(fakeClient),
 			nodeSvc: k8s.NewNodeService(fakeClient),
