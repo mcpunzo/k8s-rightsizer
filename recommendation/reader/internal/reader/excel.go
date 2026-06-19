@@ -31,7 +31,7 @@ func (r *ExcelReader) Read() ([]model.Recommendation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error reading rows: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var recommendations []model.Recommendation
 	rowIndex := 0

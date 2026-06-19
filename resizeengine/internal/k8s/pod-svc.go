@@ -157,7 +157,7 @@ func isRecentTermination(t *v1.ContainerStateTerminated, now time.Time, window t
 		return true
 	}
 
-	return t.FinishedAt.Time.After(now.Add(-window))
+	return t.FinishedAt.After(now.Add(-window))
 }
 
 func autoscalerCanLikelyHelpUnschedulable(message string) bool {
