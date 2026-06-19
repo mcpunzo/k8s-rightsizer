@@ -882,3 +882,97 @@ func mkNodeForCheck(name, arch string, ready bool, unschedulable bool) *corev1.N
 		}},
 	}
 }
+
+func TestDefaultResizerConfig(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultResizerConfig()
+
+	if cfg.WorkloadCheckInterval <= 0 {
+		t.Error("WorkloadCheckInterval should be positive")
+	}
+	if cfg.DeploymentCheckTimeout <= 0 {
+		t.Error("DeploymentCheckTimeout should be positive")
+	}
+	if cfg.StatefulsetCheckTimeout <= 0 {
+		t.Error("StatefulsetCheckTimeout should be positive")
+	}
+	if cfg.InterRecommendationDelay <= 0 {
+		t.Error("InterRecommendationDelay should be positive")
+	}
+	if cfg.NodeCompatibilityRecheckWindow <= 0 {
+		t.Error("NodeCompatibilityRecheckWindow should be positive")
+	}
+	if cfg.NodeCompatibilityRecheckPollInterval <= 0 {
+		t.Error("NodeCompatibilityRecheckPollInterval should be positive")
+	}
+	if cfg.NodeCompatibilityRecheckCooldown <= 0 {
+		t.Error("NodeCompatibilityRecheckCooldown should be positive")
+	}
+}
+
+func TestClearCompatibleNodesRecheckFailure(t *testing.T) {
+	t.Parallel()
+
+	fakeClient := fake.NewSimpleClientset()
+	r := &BaseResizer{
+		config:  DefaultResizerConfig(),
+		client:  fakeClient,
+		nodeSvc: k8s.NewNodeService(fakeClient),
+		podSvc:  k8s.NewPodService(fakeClient),
+	}
+
+	// Mark a failure
+	r.markCompatibleNodesRecheckFailure(90 * time.Second)
+	if r.lastNoCompatibleNodesAt.IsZero() {
+		t.Fatal("expected lastNoCompatibleNodesAt to be set after marking failure")
+	}
+
+	// Clear the failure
+	r.clearCompatibleNodesRecheckFailure()
+	if !r.lastNoCompatibleNodesAt.IsZero() {
+		t.Error("expected lastNoCompatibleNodesAt to be zero after clearing")
+	}
+	if r.lastNoCompatibleNodesWindow != 0 {
+		t.Error("expected lastNoCompatibleNodesWindow to be zero after clearing")
+	}
+}
+
+func TestLogPodReason(t *testing.T) {
+	t.Parallel()
+	// logPodReason just logs, ensure it doesn't panic
+	logPodReason("test-workload", "[WARN] some warning")
+	logPodReason("test-workload", "some debug reason")
+	logPodReason("test-workload", "")
+}
+
+func TestLookupWorkloadOps(t *testing.T) {
+	t.Parallel()
+
+	fakeClient := fake.NewSimpleClientset()
+	r := &BaseResizer{
+		config:              DefaultResizerConfig(),
+		client:              fakeClient,
+		deploymentWorkload:  k8s.NewDeploymentWorkload(fakeClient),
+		statefulSetWorkload: k8s.NewStatefulSetWorkload(fakeClient),
+	}
+
+	tests := []struct {
+		name    string
+		kind    model.Kind
+		wantErr bool
+	}{
+		{name: "Deployment", kind: model.Deployment, wantErr: false},
+		{name: "ReplicaSet", kind: model.ReplicaSet, wantErr: false},
+		{name: "StatefulSet", kind: model.StatefulSet, wantErr: false},
+		{name: "Unknown kind", kind: model.Kind("DaemonSet"), wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := r.lookupWorkloadOps(tt.kind)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("lookupWorkloadOps(%s) error = %v, wantErr %v", tt.kind, err, tt.wantErr)
+			}
+		})
+	}
+}

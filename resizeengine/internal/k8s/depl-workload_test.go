@@ -295,3 +295,63 @@ func TestDeploymentWorkload_GetStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestDeploymentWorkload_IsWorkloadInPausedState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		deployment *appsv1.Deployment
+		wantPaused bool
+		wantErr    bool
+	}{
+		{
+			name: "Deployment is paused",
+			deployment: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"},
+				Spec:       appsv1.DeploymentSpec{Paused: true},
+			},
+			wantPaused: true,
+		},
+		{
+			name: "Deployment is not paused",
+			deployment: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"},
+				Spec:       appsv1.DeploymentSpec{Paused: false},
+			},
+			wantPaused: false,
+		},
+		{
+			name:       "Deployment not found",
+			deployment: nil,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var fakeClient *fake.Clientset
+			if tt.deployment != nil {
+				fakeClient = fake.NewSimpleClientset(tt.deployment)
+			} else {
+				fakeClient = fake.NewSimpleClientset()
+			}
+
+			w := &DeploymentWorkload{client: fakeClient}
+			workload := &Workload{
+				WorkloadType: Deployment,
+				Namespace:    "default",
+				Name:         "api",
+			}
+
+			paused, err := w.IsWorkloadInPausedState(context.Background(), workload)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("IsWorkloadInPausedState() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && paused != tt.wantPaused {
+				t.Errorf("IsWorkloadInPausedState() = %v, want %v", paused, tt.wantPaused)
+			}
+		})
+	}
+}

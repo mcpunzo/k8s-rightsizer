@@ -2,6 +2,8 @@ package watcher
 
 import (
 	"testing"
+
+	"github.com/mcpunzo/k8s-rightsizer/model"
 )
 
 // MOCKS
@@ -100,5 +102,43 @@ func TestNotify(t *testing.T) {
 
 	if notifyCount != 2 {
 		t.Fatalf("expected 2 notifications, got %d", notifyCount)
+	}
+}
+
+func TestCreateResizeEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status ResizeStatus
+		msg    string
+	}{
+		{name: "succeeded event", status: ResizeSucceeded, msg: "[OK] resized"},
+		{name: "failed event", status: ResizeFailed, msg: "[KO] failed"},
+		{name: "skipped event", status: ResizeSkipped, msg: "[SKIP] skipped"},
+		{name: "rollback succeeded", status: ResizeRollbackSucceeded, msg: "rollback ok"},
+		{name: "rollback failed", status: ResizeRollbackFailed, msg: "rollback failed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recs := []*model.Recommendation{
+				{Namespace: "default", WorkloadName: "api", Container: "app"},
+			}
+			event := CreateResizeEvent(recs, tt.status, tt.msg)
+
+			if event == nil {
+				t.Fatal("CreateResizeEvent returned nil")
+			}
+			if event.Status != tt.status {
+				t.Errorf("Status = %v, want %v", event.Status, tt.status)
+			}
+			if event.Msg != tt.msg {
+				t.Errorf("Msg = %q, want %q", event.Msg, tt.msg)
+			}
+			if len(event.Recommendation) != 1 {
+				t.Errorf("Recommendation count = %d, want 1", len(event.Recommendation))
+			}
+		})
 	}
 }
