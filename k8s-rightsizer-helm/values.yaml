@@ -13,6 +13,10 @@ settings:
   workers: 1 # Number of concurrent workers for processing recommendations (default: 1)
   resizeStrategy: "container" # Resize strategy to use (default: container, options: container, workload)
   useLimits: false # Use resource limits to set limits on containers (default: false)
+  logLevel: "info" # Log level (default: info)
+  postRolloutCheck: false # Enable post-rollout check (default: false)
+  postRolloutCheckSec: 30 # Post-rollout check interval in seconds (default: 30)
+  nodeCompatibilityCheckWindow: 90 # Node compatibility check window in days (default: 90)
 
 rbac:
   create: true

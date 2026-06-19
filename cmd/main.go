@@ -31,6 +31,7 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (default: info, options: debug, info, warn, error)")
 	postRolloutCheck := flag.Bool("post-rollout-check", false, "Enable post-rollout check (default: false)")
 	postRolloutCheckSec := flag.Int("post-rollout-check-sec", 30, "Post-rollout check interval in seconds (default: 60)")
+	nodeCompatibilityRecheckWindow := flag.Int("node-compatibility-check-window", 90, "Node compatibility recheck window in seconds (default: 90)")
 	flag.Parse()
 
 	setLogLevel(*logLevel)
@@ -53,6 +54,7 @@ func main() {
 	log.Info().Msgf("Log level: %v", *logLevel)
 	log.Info().Msgf("Post-rollout check: %v", *postRolloutCheck)
 	log.Info().Msgf("Post-rollout check interval (sec): %v", *postRolloutCheckSec)
+	log.Info().Msgf("Node compatibility recheck window (sec): %v", *nodeCompatibilityRecheckWindow)
 
 	fileInfo, err := waitForFile(*recFile, 5, 5*time.Second)
 	if err != nil {
@@ -85,12 +87,15 @@ func main() {
 		log.Fatal().Err(err).Msg("Error adding listener")
 	}
 
+	resizerConfig := re.DefaultResizerConfig()
+	resizerConfig.NodeCompatibilityRecheckWindow = time.Duration(*nodeCompatibilityRecheckWindow) * time.Second
+
 	var resizer re.Resizer
 	switch *resizeStrategy {
 	case "container":
-		resizer = re.NewContainerResizer(k8sClient, resizeWatcher)
+		resizer = re.NewContainerResizer(k8sClient, resizeWatcher, resizerConfig)
 	case "workload":
-		resizer = re.NewWorkloadResizer(k8sClient, resizeWatcher)
+		resizer = re.NewWorkloadResizer(k8sClient, resizeWatcher, resizerConfig)
 	default:
 		log.Fatal().Msgf("Invalid resize strategy: %v", *resizeStrategy)
 	}

@@ -72,7 +72,19 @@ func stableStatus() *k8s.WorkloadStatus {
 }
 
 func newTestContainerResizer(objs ...runtime.Object) *ContainerResizer {
-	return NewContainerResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher())
+	return NewContainerResizer(fake.NewSimpleClientset(objs...), watcher.NewResizeWatcher(), testResizerConfig())
+}
+
+func testResizerConfig() ResizerConfig {
+	return ResizerConfig{
+		WorkloadCheckInterval:                10 * time.Millisecond,
+		DeploymentCheckTimeout:               120 * time.Millisecond,
+		StatefulsetCheckTimeout:              120 * time.Millisecond,
+		InterRecommendationDelay:             1 * time.Millisecond,
+		NodeCompatibilityRecheckWindow:       20 * time.Millisecond,
+		NodeCompatibilityRecheckPollInterval: 5 * time.Millisecond,
+		NodeCompatibilityRecheckCooldown:     30 * time.Second,
+	}
 }
 
 func readyNode(name, arch string) *corev1.Node {
@@ -93,20 +105,6 @@ func readyNode(name, arch string) *corev1.Node {
 // TestContainerResizer_ResizeWorkload tests the ResizeWorkload method with various scenarios
 func TestContainerResizer_ResizeWorkload(t *testing.T) {
 	t.Parallel()
-	originalInterval := WorkloadCheckInterval
-	originalDepTimeout := DeploymentCheckTimeout
-	originalStsTimeout := StatefulsetCheckTimeout
-	originalDelay := InterRecommendationDelay
-	WorkloadCheckInterval = 10 * time.Millisecond
-	DeploymentCheckTimeout = 120 * time.Millisecond
-	StatefulsetCheckTimeout = 120 * time.Millisecond
-	InterRecommendationDelay = 1 * time.Millisecond
-	t.Cleanup(func() {
-		WorkloadCheckInterval = originalInterval
-		DeploymentCheckTimeout = originalDepTimeout
-		StatefulsetCheckTimeout = originalStsTimeout
-		InterRecommendationDelay = originalDelay
-	})
 
 	tmpl := basePodTemplate("100m", "128Mi")
 
@@ -261,7 +259,7 @@ func TestContainerResizer_ResizeWorkload(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := newTestContainerResizer()
+			r := NewContainerResizer(fake.NewSimpleClientset(), watcher.NewResizeWatcher(), testResizerConfig())
 
 			if tt.name == "Rollback - soak detects post-rollout crash and rollback succeeds" {
 				var podListCalls int32
@@ -285,7 +283,7 @@ func TestContainerResizer_ResizeWorkload(t *testing.T) {
 					}}}, nil
 				})
 
-				r = NewContainerResizer(fakeClient, watcher.NewResizeWatcher())
+				r = NewContainerResizer(fakeClient, watcher.NewResizeWatcher(), testResizerConfig())
 			}
 
 			var workload *k8s.Workload
@@ -878,26 +876,6 @@ func TestContainerResizer_IsPDBTooRestrictive(t *testing.T) {
 // TestContainerResizer_ResizeJob tests the ResizeJob worker method
 func TestContainerResizer_ResizeJob(t *testing.T) {
 	t.Parallel()
-	originalInterval := WorkloadCheckInterval
-	originalDepTimeout := DeploymentCheckTimeout
-	originalStsTimeout := StatefulsetCheckTimeout
-	originalDelay := InterRecommendationDelay
-	originalWindow := NodeCompatibilityRecheckWindow
-	originalPoll := NodeCompatibilityRecheckPollInterval
-	WorkloadCheckInterval = 10 * time.Millisecond
-	DeploymentCheckTimeout = 120 * time.Millisecond
-	StatefulsetCheckTimeout = 120 * time.Millisecond
-	InterRecommendationDelay = 1 * time.Millisecond
-	NodeCompatibilityRecheckWindow = 20 * time.Millisecond
-	NodeCompatibilityRecheckPollInterval = 5 * time.Millisecond
-	t.Cleanup(func() {
-		WorkloadCheckInterval = originalInterval
-		DeploymentCheckTimeout = originalDepTimeout
-		StatefulsetCheckTimeout = originalStsTimeout
-		InterRecommendationDelay = originalDelay
-		NodeCompatibilityRecheckWindow = originalWindow
-		NodeCompatibilityRecheckPollInterval = originalPoll
-	})
 
 	tests := []struct {
 		name          string
@@ -1032,26 +1010,6 @@ func TestContainerResizer_ResizeJob(t *testing.T) {
 // TestContainerResizer_Resize tests the top-level Resize method
 func TestContainerResizer_Resize(t *testing.T) {
 	t.Parallel()
-	originalInterval := WorkloadCheckInterval
-	originalDepTimeout := DeploymentCheckTimeout
-	originalStsTimeout := StatefulsetCheckTimeout
-	originalDelay := InterRecommendationDelay
-	originalWindow := NodeCompatibilityRecheckWindow
-	originalPoll := NodeCompatibilityRecheckPollInterval
-	WorkloadCheckInterval = 10 * time.Millisecond
-	DeploymentCheckTimeout = 120 * time.Millisecond
-	StatefulsetCheckTimeout = 120 * time.Millisecond
-	InterRecommendationDelay = 1 * time.Millisecond
-	NodeCompatibilityRecheckWindow = 20 * time.Millisecond
-	NodeCompatibilityRecheckPollInterval = 5 * time.Millisecond
-	t.Cleanup(func() {
-		WorkloadCheckInterval = originalInterval
-		DeploymentCheckTimeout = originalDepTimeout
-		StatefulsetCheckTimeout = originalStsTimeout
-		InterRecommendationDelay = originalDelay
-		NodeCompatibilityRecheckWindow = originalWindow
-		NodeCompatibilityRecheckPollInterval = originalPoll
-	})
 
 	tests := []struct {
 		name        string

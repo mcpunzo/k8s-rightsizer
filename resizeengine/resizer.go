@@ -21,20 +21,35 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
-var (
-	WorkloadCheckInterval                = 10 * time.Second
-	DeploymentCheckTimeout               = 15 * time.Minute
-	StatefulsetCheckTimeout              = 30 * time.Minute
-	InterRecommendationDelay             = 2 * time.Second
-	NodeCompatibilityRecheckWindow       = 90 * time.Second
-	NodeCompatibilityRecheckPollInterval = 10 * time.Second
-	NodeCompatibilityRecheckCooldown     = 30 * time.Second
-)
-
 var errCompatibleNodesUnavailable = errors.New("no ready/schedulable nodes currently available in the cluster")
+
+// ResizerConfig holds timing and policy configuration for the resize engine.
+type ResizerConfig struct {
+	WorkloadCheckInterval                time.Duration
+	DeploymentCheckTimeout               time.Duration
+	StatefulsetCheckTimeout              time.Duration
+	InterRecommendationDelay             time.Duration
+	NodeCompatibilityRecheckWindow       time.Duration
+	NodeCompatibilityRecheckPollInterval time.Duration
+	NodeCompatibilityRecheckCooldown     time.Duration
+}
+
+// DefaultResizerConfig returns the default configuration for the resize engine.
+func DefaultResizerConfig() ResizerConfig {
+	return ResizerConfig{
+		WorkloadCheckInterval:                10 * time.Second,
+		DeploymentCheckTimeout:               15 * time.Minute,
+		StatefulsetCheckTimeout:              30 * time.Minute,
+		InterRecommendationDelay:             2 * time.Second,
+		NodeCompatibilityRecheckWindow:       90 * time.Second,
+		NodeCompatibilityRecheckPollInterval: 10 * time.Second,
+		NodeCompatibilityRecheckCooldown:     30 * time.Second,
+	}
+}
 
 // BaseResizer is a struct that holds common fields for resizers, such as references to deployment and stateful set workloads.
 type BaseResizer struct {
+	config              ResizerConfig
 	client              k8s.K8sClient
 	deploymentWorkload  *k8s.DeploymentWorkload
 	statefulSetWorkload *k8s.StatefulSetWorkload
@@ -148,15 +163,17 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 			return fmt.Errorf("no compatible architecture nodes available (possible Graviton/x86 mismatch)")
 		}
 
+		recheckWindow := r.config.NodeCompatibilityRecheckWindow
+
 		if r.shouldSkipCompatibleNodesRecheck() {
 			return fmt.Errorf("%w (recent compatibility recheck already failed, skipping wait)", errCompatibleNodesUnavailable)
 		}
 
-		log.Warn().Msgf("No ready/schedulable nodes currently available in the cluster. Rechecking for %s before failing.", NodeCompatibilityRecheckWindow)
+		log.Warn().Msgf("No ready/schedulable nodes currently available in the cluster. Rechecking for %s before failing.", recheckWindow)
 
-		if err := r.waitForCompatibleNodes(ctx, architecture); err != nil {
+		if err := r.waitForCompatibleNodes(ctx, architecture, recheckWindow); err != nil {
 			if errors.Is(err, errCompatibleNodesUnavailable) {
-				r.markCompatibleNodesRecheckFailure(NodeCompatibilityRecheckWindow)
+				r.markCompatibleNodesRecheckFailure(recheckWindow)
 			}
 			return err
 		}
@@ -167,15 +184,20 @@ func (r *BaseResizer) NodeCheck(ctx context.Context, workload *k8s.Workload) err
 	return nil
 }
 
-func (r *BaseResizer) waitForCompatibleNodes(ctx context.Context, architecture string) error {
-	if NodeCompatibilityRecheckWindow <= 0 {
+// waitForCompatibleNodes waits for a specified duration to check if there are any compatible and ready nodes available in the cluster for the given architecture.
+// It periodically checks the node status until either compatible nodes are found or the timeout is reached.
+// param ctx: The context for managing request deadlines and cancellation.
+// param architecture: The architecture of the nodes to check for compatibility (e.g., "amd64", "arm64").
+// returns: An error if no compatible nodes are found within the specified duration or if any issues occur during the check.
+func (r *BaseResizer) waitForCompatibleNodes(ctx context.Context, architecture string, recheckWindow time.Duration) error {
+	if recheckWindow <= 0 {
 		return errCompatibleNodesUnavailable
 	}
 
-	recheckCtx, cancel := context.WithTimeout(ctx, NodeCompatibilityRecheckWindow)
+	recheckCtx, cancel := context.WithTimeout(ctx, recheckWindow)
 	defer cancel()
 
-	err := wait.PollUntilContextTimeout(recheckCtx, NodeCompatibilityRecheckPollInterval, NodeCompatibilityRecheckWindow, true, func(pollCtx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(recheckCtx, r.config.NodeCompatibilityRecheckPollInterval, recheckWindow, true, func(pollCtx context.Context) (bool, error) {
 		nodeStats, err := r.nodeSvc.Find(pollCtx, architecture)
 		if err != nil {
 			return false, fmt.Errorf("failed to recheck compatible nodes: %v", err)
@@ -193,14 +215,17 @@ func (r *BaseResizer) waitForCompatibleNodes(ctx context.Context, architecture s
 	}
 
 	if err == context.DeadlineExceeded || err == context.Canceled {
-		return fmt.Errorf("%w after %s", errCompatibleNodesUnavailable, NodeCompatibilityRecheckWindow)
+		return fmt.Errorf("%w after %s", errCompatibleNodesUnavailable, recheckWindow)
 	}
 
 	return err
 }
 
+// shouldSkipCompatibleNodesRecheck checks if the cooldown period for rechecking compatible nodes has not yet elapsed since the last failed check.
+// It returns true if the cooldown period has not elapsed, indicating that the recheck should be skipped to avoid excessive retries.
+// returns: A boolean indicating whether the recheck for compatible nodes should be skipped.
 func (r *BaseResizer) shouldSkipCompatibleNodesRecheck() bool {
-	if NodeCompatibilityRecheckCooldown <= 0 {
+	if r.config.NodeCompatibilityRecheckCooldown <= 0 {
 		return false
 	}
 
@@ -211,9 +236,12 @@ func (r *BaseResizer) shouldSkipCompatibleNodesRecheck() bool {
 		return false
 	}
 
-	return time.Since(r.lastNoCompatibleNodesAt) < NodeCompatibilityRecheckCooldown
+	return time.Since(r.lastNoCompatibleNodesAt) < r.config.NodeCompatibilityRecheckCooldown
 }
 
+// markCompatibleNodesRecheckFailure records the timestamp of the last failed check for compatible nodes and the duration of the window during which the failure occurred.
+// This information is used to determine if subsequent rechecks should be skipped to avoid excessive retries.
+// param window: The duration of the window during which the last failed check for compatible nodes occurred.
 func (r *BaseResizer) markCompatibleNodesRecheckFailure(window time.Duration) {
 	r.nodeRecheckMu.Lock()
 	defer r.nodeRecheckMu.Unlock()
@@ -222,6 +250,7 @@ func (r *BaseResizer) markCompatibleNodesRecheckFailure(window time.Duration) {
 	r.lastNoCompatibleNodesWindow = window
 }
 
+// clearCompatibleNodesRecheckFailure resets the timestamp and window of the last failed check for compatible nodes, indicating that the recheck has succeeded and subsequent rechecks can proceed normally.
 func (r *BaseResizer) clearCompatibleNodesRecheckFailure() {
 	r.nodeRecheckMu.Lock()
 	defer r.nodeRecheckMu.Unlock()
@@ -394,13 +423,13 @@ func (r *BaseResizer) ApplyResize(ctx context.Context, recs []*model.Recommendat
 	}
 
 	// Check status with polling and timeout
-	workloadCheckTimeout := DeploymentCheckTimeout
+	workloadCheckTimeout := r.config.DeploymentCheckTimeout
 	if workload.WorkloadType == k8s.StatefulSet {
-		workloadCheckTimeout = StatefulsetCheckTimeout
+		workloadCheckTimeout = r.config.StatefulsetCheckTimeout
 	}
 
 	checkStatusFunc := r.CheckWorkloadStatus(ctx, w, workload)
-	err = wait.PollUntilContextTimeout(ctx, WorkloadCheckInterval, workloadCheckTimeout, false, checkStatusFunc)
+	err = wait.PollUntilContextTimeout(ctx, r.config.WorkloadCheckInterval, workloadCheckTimeout, false, checkStatusFunc)
 
 	if err != nil {
 		return r.rollbackAfterFailedUpdate(ctx, err, recs, w, workload, originalTemplate, workloadCheckTimeout)
@@ -432,7 +461,7 @@ func (r *BaseResizer) verifyPostRolloutStability(ctx context.Context, workload *
 
 	log.Debug().Msgf("[%s] Starting post-rollout soak verification for %s", workload.Id, postRolloutSoakDuration)
 
-	err := wait.PollUntilContextTimeout(soakCtx, WorkloadCheckInterval, postRolloutSoakDuration, true, func(pollCtx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(soakCtx, r.config.WorkloadCheckInterval, postRolloutSoakDuration, true, func(pollCtx context.Context) (bool, error) {
 		isError, reason := r.podSvc.CheckPodCriticalErrors(pollCtx, workload)
 		if isError {
 			return false, fmt.Errorf("post-rollout instability detected for %s: %s", workload.Id, reason)
@@ -515,7 +544,7 @@ func (r *BaseResizer) rollbackAfterFailedUpdate(
 
 	errRollbackVerification := wait.PollUntilContextTimeout(
 		rollbackVerifyCtx,
-		WorkloadCheckInterval,
+		r.config.WorkloadCheckInterval,
 		workloadCheckTimeout,
 		false,
 		r.CheckWorkloadStatus(rollbackVerifyCtx, w, rollbackWorkload),

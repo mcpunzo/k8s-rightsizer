@@ -21,10 +21,12 @@ type WorkloadResizer struct {
 // NewWorkloadResizer creates a new instance of WorkloadResizer with the provided Kubernetes client.
 // param client: The Kubernetes client used to interact with the cluster.
 // param resizeWatcher: The ResizeWatcher used to monitor resize operations.
+// param config: The ResizerConfig containing timing and policy configuration.
 // returns: A pointer to a new instance of WorkloadResizer.
-func NewWorkloadResizer(client k8s.K8sClient, resizeWatcher *watcher.ResizeWatcher) *WorkloadResizer {
+func NewWorkloadResizer(client k8s.K8sClient, resizeWatcher *watcher.ResizeWatcher, config ResizerConfig) *WorkloadResizer {
 	return &WorkloadResizer{
 		BaseResizer: BaseResizer{
+			config:              config,
 			client:              client,
 			deploymentWorkload:  k8s.NewDeploymentWorkload(client),
 			statefulSetWorkload: k8s.NewStatefulSetWorkload(client),
@@ -161,7 +163,7 @@ func (r *WorkloadResizer) ResizeJob(ctx context.Context, workloadRecs <-chan []*
 			r.resizeWatcher.Notify(resizeEvent)
 			results <- okMsg
 			select {
-			case <-time.After(InterRecommendationDelay):
+			case <-time.After(r.config.InterRecommendationDelay):
 			case <-ctx.Done():
 				log.Info().Msg("Context canceled during delay, stopping ResizeJob")
 				return
