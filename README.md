@@ -129,7 +129,7 @@ Below is a list of all the parameters of the k8s-rightsizer. You can use them by
 | RESIZE_ON_RECREATE   | true \| false | false     | Whether to resize workload with update strategy Recreate         |
 | DRY_RUN              | true \| false | false     | Plan the execution without resizing containers                   |
 | WORKERS              |               | 1         | Number of concurrent resizing workers<sup>1</sup>                           |
-| RESIZE_STRATEGY      | container\|workload | container | container strategy applies recommendations container by container. workload strategy applies recommendations per workload, i.e. multiple recommendations for the same workload are applied at once<sup>2</sup>          |
+| RESIZE_STRATEGY      | container\|workload | workload | container strategy applies recommendations container by container. workload strategy applies recommendations per workload, i.e. multiple recommendations for the same workload are applied at once<sup>2</sup>          |
 | USE_LIMITS              | true \| false | false     | Set cpu and memory limits on workload containers |
 | LOG_LEVEL            | debug \| info \| warn \| error | info | Set the log level |
 | POST-ROLLOUT-CHECK  | true \| false | false     | Enable a watch period after workload rollout to double-check workload status<sup>3</sup> |

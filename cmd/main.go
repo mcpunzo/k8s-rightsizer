@@ -26,7 +26,7 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "Enable dry-run mode")
 	resizeOnRecreate := flag.Bool("resize-on-recreate", false, "Allow resizing if the workload update strategy is Recreate (default: false)")
 	numberOfWorkers := flag.Int("workers", 1, "Number of concurrent workers for processing recommendations")
-	resizeStrategy := flag.String("resize-strategy", "container", "Resize strategy to use (default: container, options: container, workload)")
+	resizeStrategy := flag.String("resize-strategy", "workload", "Resize strategy to use (default: workload, options: container, workload)")
 	useLimits := flag.Bool("use-limits", false, "Use resource limits instead of requests for resizing (default: false)")
 	logLevel := flag.String("log-level", "info", "Log level (default: info, options: debug, info, warn, error)")
 	postRolloutCheck := flag.Bool("post-rollout-check", false, "Enable post-rollout check (default: false)")
