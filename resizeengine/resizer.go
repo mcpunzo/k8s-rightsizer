@@ -531,6 +531,9 @@ func (r *BaseResizer) rollbackAfterFailedUpdate(
 	})
 
 	if errRollback != nil {
+		failMsg := fmt.Sprintf("[ROLLBACK FAILED] %s: %v", workload.Id, errRollback)
+		rollbackEvent := watcher.CreateResizeEvent(rollbackRecs, watcher.ResizeRollbackFailed, failMsg)
+		r.resizeWatcher.Notify(rollbackEvent)
 		return fmt.Errorf("failed update (%v) and failed rollback (%v)", updateErr, errRollback)
 	}
 
@@ -550,8 +553,15 @@ func (r *BaseResizer) rollbackAfterFailedUpdate(
 		r.CheckWorkloadStatus(rollbackVerifyCtx, w, rollbackWorkload),
 	)
 	if errRollbackVerification != nil {
+		failMsg := fmt.Sprintf("[ROLLBACK FAILED - UNSTABLE] %s: %v", workload.Id, errRollbackVerification)
+		rollbackEvent := watcher.CreateResizeEvent(rollbackRecs, watcher.ResizeRollbackFailed, failMsg)
+		r.resizeWatcher.Notify(rollbackEvent)
 		return fmt.Errorf("update failed (%v), rollback completed but workload is not stable (%v)", updateErr, errRollbackVerification)
 	}
+
+	succMsg := fmt.Sprintf("[ROLLBACK SUCCESS] %s rolled back from failed resize", workload.Id)
+	rollbackEvent := watcher.CreateResizeEvent(rollbackRecs, watcher.ResizeRollbackSucceeded, succMsg)
+	r.resizeWatcher.Notify(rollbackEvent)
 
 	return fmt.Errorf("update canceled and rollback completed successfully: %v", updateErr)
 }
