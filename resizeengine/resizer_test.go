@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/mcpunzo/k8s-rightsizer/model"
 	k8s "github.com/mcpunzo/k8s-rightsizer/resizeengine/internal/k8s"
+	"github.com/mcpunzo/k8s-rightsizer/watcher"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -44,6 +46,97 @@ func (m *mockBaseWorkloadOps) IsWorkloadInPausedState(_ context.Context, _ *k8s.
 		return false, nil
 	}
 	return m.isPausedFunc()
+}
+
+// mockResizeListener captures resize events for testing
+type mockResizeListener struct {
+	mu     sync.Mutex
+	events []*watcher.ResizeEvent
+}
+
+func (m *mockResizeListener) HandleResizeEvent(event *watcher.ResizeEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, event)
+}
+
+func (m *mockResizeListener) getEvents() []*watcher.ResizeEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]*watcher.ResizeEvent(nil), m.events...)
+}
+
+// Test workload service implementations for rollback testing
+
+type failingRollbackWorkloadSvc struct {
+	workload *k8s.Workload
+}
+
+func (f *failingRollbackWorkloadSvc) FindWorkload(ctx context.Context, rec *model.Recommendation) (*k8s.Workload, error) {
+	return f.workload, nil
+}
+
+func (f *failingRollbackWorkloadSvc) ResizeWorkload(ctx context.Context, w *k8s.Workload, recs []*model.Recommendation) error {
+	return errors.New("simulated rollback failure")
+}
+
+func (f *failingRollbackWorkloadSvc) GetStatus(ctx context.Context, w *k8s.Workload) (*k8s.WorkloadStatus, error) {
+	return &k8s.WorkloadStatus{
+		ExpectedReplicas:  1,
+		UpdatedReplicas:   1,
+		AvailableReplicas: 1,
+	}, nil
+}
+
+func (f *failingRollbackWorkloadSvc) IsWorkloadInPausedState(ctx context.Context, w *k8s.Workload) (bool, error) {
+	return false, nil
+}
+
+type successRollbackWorkloadSvc struct {
+	workload *k8s.Workload
+}
+
+func (s *successRollbackWorkloadSvc) FindWorkload(ctx context.Context, rec *model.Recommendation) (*k8s.Workload, error) {
+	return s.workload, nil
+}
+
+func (s *successRollbackWorkloadSvc) ResizeWorkload(ctx context.Context, w *k8s.Workload, recs []*model.Recommendation) error {
+	return nil // Success
+}
+
+func (s *successRollbackWorkloadSvc) GetStatus(ctx context.Context, w *k8s.Workload) (*k8s.WorkloadStatus, error) {
+	return &k8s.WorkloadStatus{
+		ExpectedReplicas:   1,
+		UpdatedReplicas:    1,
+		AvailableReplicas:  1,
+		ObservedGeneration: 1,
+		Generation:         1,
+	}, nil
+}
+
+func (s *successRollbackWorkloadSvc) IsWorkloadInPausedState(ctx context.Context, w *k8s.Workload) (bool, error) {
+	return false, nil
+}
+
+type unstableRollbackWorkloadSvc struct {
+	workload *k8s.Workload
+}
+
+func (u *unstableRollbackWorkloadSvc) FindWorkload(ctx context.Context, rec *model.Recommendation) (*k8s.Workload, error) {
+	return u.workload, nil
+}
+
+func (u *unstableRollbackWorkloadSvc) ResizeWorkload(ctx context.Context, w *k8s.Workload, recs []*model.Recommendation) error {
+	return nil // Rollback succeeds
+}
+
+func (u *unstableRollbackWorkloadSvc) GetStatus(ctx context.Context, w *k8s.Workload) (*k8s.WorkloadStatus, error) {
+	// Return error to simulate unstable workload after rollback
+	return nil, errors.New("simulated workload instability")
+}
+
+func (u *unstableRollbackWorkloadSvc) IsWorkloadInPausedState(ctx context.Context, w *k8s.Workload) (bool, error) {
+	return false, nil
 }
 
 // TestCreateRollbackRecommendation tests the CreateRollbackRecommendation method
@@ -974,5 +1067,254 @@ func TestLookupWorkloadOps(t *testing.T) {
 				t.Errorf("lookupWorkloadOps(%s) error = %v, wantErr %v", tt.kind, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestRollbackAfterFailedUpdate_RollbackFailed tests ResizeRollbackFailed event when rollback fails
+func TestRollbackAfterFailedUpdate_RollbackFailed(t *testing.T) {
+	t.Parallel()
+
+	fakeClient := fake.NewSimpleClientset()
+	resizeWatcher := watcher.NewResizeWatcher()
+	listener := &mockResizeListener{}
+	err := resizeWatcher.AddListener(listener)
+	if err != nil {
+		t.Fatalf("failed to add listener: %v", err)
+	}
+
+	r := &BaseResizer{
+		config:              DefaultResizerConfig(),
+		client:              fakeClient,
+		resizeWatcher:       resizeWatcher,
+		deploymentWorkload:  k8s.NewDeploymentWorkload(fakeClient),
+		statefulSetWorkload: k8s.NewStatefulSetWorkload(fakeClient),
+		podSvc:              k8s.NewPodService(fakeClient),
+		nodeSvc:             k8s.NewNodeService(fakeClient),
+	}
+
+	ctx := context.Background()
+	recs := []*model.Recommendation{
+		{
+			Namespace:    "default",
+			WorkloadName: "test-deploy",
+			Container:    "app",
+			Kind:         model.Deployment,
+		},
+	}
+
+	template := corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("100m"),
+							corev1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	workload := &k8s.Workload{
+		Id:        "default/test-deploy",
+		Name:      "test-deploy",
+		Namespace: "default",
+		Template:  &template,
+	}
+
+	failWS := &failingRollbackWorkloadSvc{workload: workload}
+	updateErr := errors.New("original update failure")
+
+	err = r.rollbackAfterFailedUpdate(ctx, updateErr, recs, failWS, workload, &template, 10*time.Second)
+
+	if err == nil {
+		t.Fatal("rollbackAfterFailedUpdate should return error")
+	}
+
+	// Check that ResizeRollbackFailed event was sent
+	events := listener.getEvents()
+	if len(events) == 0 {
+		t.Fatal("expected ResizeRollbackFailed event, got no events")
+	}
+
+	found := false
+	for _, event := range events {
+		if event.Status == watcher.ResizeRollbackFailed && strings.Contains(event.Msg, "ROLLBACK FAILED") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected ResizeRollbackFailed event, got events: %+v", events)
+	}
+}
+
+// TestRollbackAfterFailedUpdate_RollbackSucceeded tests ResizeRollbackSucceeded event when rollback succeeds
+func TestRollbackAfterFailedUpdate_RollbackSucceeded(t *testing.T) {
+	t.Parallel()
+
+	fakeClient := fake.NewSimpleClientset()
+	resizeWatcher := watcher.NewResizeWatcher()
+	listener := &mockResizeListener{}
+	err := resizeWatcher.AddListener(listener)
+	if err != nil {
+		t.Fatalf("failed to add listener: %v", err)
+	}
+
+	r := &BaseResizer{
+		config:              DefaultResizerConfig(),
+		client:              fakeClient,
+		resizeWatcher:       resizeWatcher,
+		deploymentWorkload:  k8s.NewDeploymentWorkload(fakeClient),
+		statefulSetWorkload: k8s.NewStatefulSetWorkload(fakeClient),
+		podSvc:              k8s.NewPodService(fakeClient),
+		nodeSvc:             k8s.NewNodeService(fakeClient),
+	}
+
+	ctx := context.Background()
+	recs := []*model.Recommendation{
+		{
+			Namespace:    "default",
+			WorkloadName: "test-deploy",
+			Container:    "app",
+			Kind:         model.Deployment,
+		},
+	}
+
+	template := corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("100m"),
+							corev1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	workload := &k8s.Workload{
+		Id:        "default/test-deploy",
+		Name:      "test-deploy",
+		Namespace: "default",
+		Template:  &template,
+	}
+
+	successWS := &successRollbackWorkloadSvc{workload: workload}
+	updateErr := errors.New("original update failure")
+
+	err = r.rollbackAfterFailedUpdate(ctx, updateErr, recs, successWS, workload, &template, 10*time.Second)
+
+	if err == nil {
+		t.Fatal("rollbackAfterFailedUpdate should return error (the original update error)")
+	}
+
+	// Check that ResizeRollbackSucceeded event was sent
+	events := listener.getEvents()
+	if len(events) == 0 {
+		t.Fatal("expected ResizeRollbackSucceeded event, got no events")
+	}
+
+	found := false
+	for _, event := range events {
+		if event.Status == watcher.ResizeRollbackSucceeded && strings.Contains(event.Msg, "ROLLBACK SUCCESS") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected ResizeRollbackSucceeded event, got events: %+v", events)
+	}
+}
+
+// TestRollbackAfterFailedUpdate_RollbackUnstable tests ResizeRollbackFailed event when rollback succeeds but workload is unstable
+func TestRollbackAfterFailedUpdate_RollbackUnstable(t *testing.T) {
+	t.Parallel()
+
+	fakeClient := fake.NewSimpleClientset()
+	resizeWatcher := watcher.NewResizeWatcher()
+	listener := &mockResizeListener{}
+	err := resizeWatcher.AddListener(listener)
+	if err != nil {
+		t.Fatalf("failed to add listener: %v", err)
+	}
+
+	r := &BaseResizer{
+		config:              DefaultResizerConfig(),
+		client:              fakeClient,
+		resizeWatcher:       resizeWatcher,
+		deploymentWorkload:  k8s.NewDeploymentWorkload(fakeClient),
+		statefulSetWorkload: k8s.NewStatefulSetWorkload(fakeClient),
+		podSvc:              k8s.NewPodService(fakeClient),
+		nodeSvc:             k8s.NewNodeService(fakeClient),
+	}
+
+	ctx := context.Background()
+	recs := []*model.Recommendation{
+		{
+			Namespace:    "default",
+			WorkloadName: "test-deploy",
+			Container:    "app",
+			Kind:         model.Deployment,
+		},
+	}
+
+	template := corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "app",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("100m"),
+							corev1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	workload := &k8s.Workload{
+		Id:        "default/test-deploy",
+		Name:      "test-deploy",
+		Namespace: "default",
+		Template:  &template,
+	}
+
+	unstableWS := &unstableRollbackWorkloadSvc{workload: workload}
+	updateErr := errors.New("original update failure")
+
+	err = r.rollbackAfterFailedUpdate(ctx, updateErr, recs, unstableWS, workload, &template, 1*time.Second)
+
+	if err == nil {
+		t.Fatal("rollbackAfterFailedUpdate should return error")
+	}
+
+	// Check that ResizeRollbackFailed event was sent (because workload is unstable)
+	events := listener.getEvents()
+	if len(events) == 0 {
+		t.Fatal("expected ResizeRollbackFailed event, got no events")
+	}
+
+	found := false
+	for _, event := range events {
+		if event.Status == watcher.ResizeRollbackFailed && strings.Contains(event.Msg, "ROLLBACK FAILED - UNSTABLE") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected ResizeRollbackFailed (unstable) event, got events: %+v", events)
 	}
 }
