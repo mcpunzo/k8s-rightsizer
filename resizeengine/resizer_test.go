@@ -1166,7 +1166,14 @@ func TestRollbackAfterFailedUpdate_RollbackSucceeded(t *testing.T) {
 	}
 
 	r := &BaseResizer{
-		config:              DefaultResizerConfig(),
+		config: ResizerConfig{
+			WorkloadCheckInterval:            10 * time.Millisecond,
+			DeploymentCheckTimeout:           DefaultResizerConfig().DeploymentCheckTimeout,
+			StatefulsetCheckTimeout:          DefaultResizerConfig().StatefulsetCheckTimeout,
+			InterRecommendationDelay:         DefaultResizerConfig().InterRecommendationDelay,
+			NodeCompatibilityRecheckWindow:   DefaultResizerConfig().NodeCompatibilityRecheckWindow,
+			NodeCompatibilityRecheckCooldown: DefaultResizerConfig().NodeCompatibilityRecheckCooldown,
+		},
 		client:              fakeClient,
 		resizeWatcher:       resizeWatcher,
 		deploymentWorkload:  k8s.NewDeploymentWorkload(fakeClient),

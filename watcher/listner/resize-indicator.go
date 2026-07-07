@@ -38,7 +38,10 @@ func (r *ResizeIndicator) HandleResizeEvent(event *watcher.ResizeEvent) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	r.RecommendationProcessed += len(event.Recommendation)
+	// Rollback events are informational only; the recommendations were already counted as Failed.
+	if event.Status != watcher.ResizeRollbackSucceeded && event.Status != watcher.ResizeRollbackFailed {
+		r.RecommendationProcessed += len(event.Recommendation)
+	}
 	r.StatusMap[event.Status] += len(event.Recommendation)
 
 	log.Info().Msgf("ResizeIndicator: Processed %d/%d, %s/%d, %s/%d, %s/%d, %s/%d, %s/%d", r.RecommendationProcessed, r.NumberOfRecommendations,

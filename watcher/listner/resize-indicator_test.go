@@ -152,3 +152,51 @@ func TestResizeIndicator_HandleResizeEvent_StatusBreakdown(t *testing.T) {
 		t.Fatalf("StatusMap[%s] = %d, want 0", watcher.ResizeRollbackFailed, indicator.StatusMap[watcher.ResizeRollbackFailed])
 	}
 }
+
+func TestResizeIndicator_HandleResizeEvent_RollbackDoesNotIncrementProcessed(t *testing.T) {
+	t.Parallel()
+
+	indicator := NewResizeIndicator(5)
+
+	// Simulate: 2 recs fail, then rollback succeeds for those 2
+	indicator.HandleResizeEvent(watcher.CreateResizeEvent(
+		[]*model.Recommendation{{}, {}},
+		watcher.ResizeFailed,
+		"failed",
+	))
+	indicator.HandleResizeEvent(watcher.CreateResizeEvent(
+		[]*model.Recommendation{{}, {}},
+		watcher.ResizeRollbackSucceeded,
+		"rollback ok",
+	))
+
+	// Processed should be 2, not 4
+	if indicator.RecommendationProcessed != 2 {
+		t.Fatalf("RecommendationProcessed = %d, want 2", indicator.RecommendationProcessed)
+	}
+
+	if indicator.StatusMap[watcher.ResizeFailed] != 2 {
+		t.Fatalf("StatusMap[%s] = %d, want 2", watcher.ResizeFailed, indicator.StatusMap[watcher.ResizeFailed])
+	}
+
+	if indicator.StatusMap[watcher.ResizeRollbackSucceeded] != 2 {
+		t.Fatalf("StatusMap[%s] = %d, want 2", watcher.ResizeRollbackSucceeded, indicator.StatusMap[watcher.ResizeRollbackSucceeded])
+	}
+
+	// Now simulate a rollback failure
+	indicator.HandleResizeEvent(watcher.CreateResizeEvent(
+		[]*model.Recommendation{{}},
+		watcher.ResizeFailed,
+		"failed again",
+	))
+	indicator.HandleResizeEvent(watcher.CreateResizeEvent(
+		[]*model.Recommendation{{}},
+		watcher.ResizeRollbackFailed,
+		"rollback failed",
+	))
+
+	// Processed should be 3, not 5
+	if indicator.RecommendationProcessed != 3 {
+		t.Fatalf("RecommendationProcessed = %d, want 3", indicator.RecommendationProcessed)
+	}
+}
