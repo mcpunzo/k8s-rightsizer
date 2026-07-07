@@ -18,7 +18,7 @@ settings:
     argument: 100
     flags: {}
   header-max-length:
-    argument: 72
+    argument: 80
     flags: {}
   header-min-length:
     argument: 10
