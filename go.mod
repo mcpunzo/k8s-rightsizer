@@ -6,7 +6,7 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/xuri/excelize/v2 v2.10.1
 	k8s.io/api v0.36.2
-	k8s.io/apimachinery v0.36.2
+	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.2
 )
 
