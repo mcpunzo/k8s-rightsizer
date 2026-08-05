@@ -1,9 +1,11 @@
 # Changelog
 
-## [0.3.1] - 2026-06-23
+## [0.3.2] - 2026-08-05
 
 ### Bug Fixes
 
-- enhance event notifications for rollbacks error and succes cases (#34)
+- progress indicator (#42)
+- resolve CVE GO-2026-5970
+- resolve CVE GO-2026-5960
 
 
