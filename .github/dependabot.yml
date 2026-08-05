@@ -3,7 +3,7 @@ updates:
   - package-ecosystem: gomod
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     target-branch: develop      
     labels:
       - "kind/dependency-update"
@@ -14,7 +14,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     target-branch: develop
     labels:
       - "kind/dependency-update"
