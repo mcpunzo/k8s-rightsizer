@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM golang:1.26.5-alpine@sha256:739b5c7c89c2ba19b5744fab836efe973158e2c4b08808e99285f735af3e2926 AS builder
+FROM golang:1.26.6-alpine@sha256:1a9c10cf505a9e6b1e96ea77ebdbfe79a0f10380181faf88bc3b51d7e4315fae AS builder
 RUN apk add --no-cache make git
 WORKDIR /app
 COPY . .
