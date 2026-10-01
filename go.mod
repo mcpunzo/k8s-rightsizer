@@ -5,9 +5,9 @@ go 1.26.6
 require (
 	github.com/rs/zerolog v1.35.1
 	github.com/xuri/excelize/v2 v2.11.0
-	k8s.io/api v0.37.0
-	k8s.io/apimachinery v0.37.0
-	k8s.io/client-go v0.37.0
+	k8s.io/api v0.37.1
+	k8s.io/apimachinery v0.37.1
+	k8s.io/client-go v0.37.1
 )
 
 require (
